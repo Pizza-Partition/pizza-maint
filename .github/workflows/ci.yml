@@ -1,5 +1,5 @@
-name: transition-scaffold
-on: [push, pull_request, workflow_dispatch]
+name: pizza-maint
+on: [push, pull_request, workflow_dispatch, workflow_call]
 permissions:
   contents: read
 env:
@@ -37,12 +37,14 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_PATH, `${installed}\n`);
           JS
       - name: Install build and bundle tools
-        run: sudo apt-get update && sudo apt-get install -y clang-format binutils libarchive-tools
+        run: sudo apt-get update && sudo apt-get install -y binutils libarchive-tools e2fsprogs dosfstools mtools ntfs-3g btrfs-progs
       - name: Build, validate and test
         run: |
           zig build deps
           zig build fmt-check
-          zig build doctor all test
+          zig build check check-proto test-session test-maint-session-image test-maint-executor
+          zig build test-storage-unit test-filesystems test-storage-crash
+          zig build protocol-package
       - name: Build static release artifacts
         run: zig build -Doptimize=safe
       - name: Assert static PID 1 binary
@@ -51,5 +53,5 @@ jobs:
             echo 'Maintenance PID1 must not resolve host libc'; exit 1
           fi
 
-# VM, full-transition and distro-matrix jobs require explicit kernel/image
+# UEFI reboot and distro-matrix jobs require explicit kernel/image
 # fixtures. They are not silently skipped or represented as green acceptance.

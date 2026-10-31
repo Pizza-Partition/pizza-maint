@@ -25,7 +25,7 @@ test "report CLI preserves a torn journal and labels interrupted steps without g
     try file.writePositionalAll(io, "torn", valid_bytes);
     file.close(io);
     const before = try utils.filesystem.hashFileSha256(a, io, path);
-    const result = try std.process.run(a, io, .{ .argv = &.{ @import("test_binaries").pizza, "transition", "report", "--journal", path } });
+    const result = try std.process.run(a, io, .{ .argv = &.{ @import("test_binaries").tools, "report", path } });
     try std.testing.expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
     try std.testing.expectEqualStrings("", result.stderr);
     const value = try std.json.parseFromSliceLeaky(std.json.Value, a, result.stdout, .{});

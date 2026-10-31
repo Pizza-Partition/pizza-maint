@@ -4,7 +4,7 @@ const initramfs = @import("initramfs");
 const clap = @import("clap");
 const h = @import("harness.zig");
 
-const params = clap.parseParamsComptime(
+const PARAMS = clap.parseParamsComptime(
     \\-h, --help  Display this help and exit.
     \\--kernel <str>  Host kernel path (default: KERNEL or /boot/vmlinuz-linux).
     \\--binary <str>  Static PID 1 executable.
@@ -23,7 +23,7 @@ pub fn run(
 ) !void {
     var iter: clap.args.SliceIterator = .{ .args = argv };
     var diagnostic: clap.Diagnostic = .{};
-    var parsed = clap.parseEx(clap.Help, &params, clap.parsers.default, &iter, .{
+    var parsed = clap.parseEx(clap.Help, &PARAMS, clap.parsers.default, &iter, .{
         .allocator = allocator,
         .diagnostic = &diagnostic,
     }) catch |err| {
@@ -33,7 +33,7 @@ pub fn run(
     defer parsed.deinit();
     if (parsed.args.help != 0) {
         try std.Io.File.stdout().writeStreamingAll(io, "Usage: pizza-tests smoke [options]\n");
-        return clap.helpToFile(io, .stdout(), clap.Help, &params, .{});
+        return clap.helpToFile(io, .stdout(), clap.Help, &PARAMS, .{});
     }
     const kernel = try utils.filesystem.resolveOutputPath(
         allocator,

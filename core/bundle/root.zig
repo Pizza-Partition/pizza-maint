@@ -2,7 +2,7 @@
 const std = @import("std");
 const utils = @import("utils");
 const filesystem = utils.filesystem;
-pub const prefix = "/opt/pizza/bundle";
+pub const PREFIX = "/opt/pizza/bundle";
 
 /// Joins an existing bundle-relative path to `root`, rejecting traversal and escaping symlinks.
 /// Returns an allocator-owned joined path; the returned spelling is not canonicalized.
@@ -23,6 +23,7 @@ pub fn rooted(
     if (!filesystem.pathIsWithin(
         try std.Io.Dir.cwd().realPathFileAlloc(io, root, allocator),
         canonical,
-    )) return error.EscapingSymlink;
+    ))
+        return error.EscapingSymlink;
     return path;
 }

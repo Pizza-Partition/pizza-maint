@@ -1,13 +1,13 @@
 //! JSON wire types for the supported Sigstore bundle and provenance profile.
-const encoding = @import("encoding.zig");
+const time_encoding = @import("utils").time;
 
 pub const Validity = struct {
     start: []const u8,
     end: ?[]const u8 = null,
 
     pub fn validate(self: Validity, time: u64) !void {
-        if (time < try encoding.timestamp(self.start)) return error.InvalidAttestation;
-        if (self.end) |end| if (time > try encoding.timestamp(end)) return error.InvalidAttestation;
+        if (time < try time_encoding.timestamp(self.start)) return error.InvalidAttestation;
+        if (self.end) |end| if (time > try time_encoding.timestamp(end)) return error.InvalidAttestation;
     }
 };
 

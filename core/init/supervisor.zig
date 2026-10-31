@@ -5,13 +5,25 @@ const linux = std.os.linux;
 var received: u32 = 0;
 
 fn handle(signal: linux.SIG) callconv(.c) void {
-    _ = @atomicRmw(u32, &received, .Or, @as(u32, 1) << @intCast(@backingInt(signal) - 1), .monotonic);
+    _ = @atomicRmw(
+        u32,
+        &received,
+        .Or,
+        @as(u32, 1) << @intCast(@backingInt(signal) - 1),
+        .monotonic,
+    );
 }
 
+/// Sets up signal handlers for SIGCHLD, SIGTERM, SIGINT, SIGHUP, SIGUSR1, and SIGUSR2.
 pub fn installSignals() !void {
-    const action: linux.Sigaction = .{ .handler = .{ .handler = handle }, .mask = linux.sigemptyset(), .flags = 0 };
+    const action: linux.Sigaction = .{
+        .handler = .{ .handler = handle },
+        .mask = linux.sigemptyset(),
+        .flags = 0,
+    };
     for ([_]linux.SIG{ .CHLD, .TERM, .INT, .HUP, .USR1, .USR2 }) |signal|
-        if (linux.errno(linux.sigaction(signal, &action, null)) != .SUCCESS) return error.SignalSetupFailed;
+        if (linux.errno(linux.sigaction(signal, &action, null)) != .SUCCESS)
+            return error.SignalSetupFailed;
 }
 
 pub fn takeSignals() u32 {
@@ -40,9 +52,9 @@ pub fn probe() !linux.pid_t {
     const pid = linux.fork();
     if (linux.errno(pid) != .SUCCESS) return error.ForkFailed;
     if (pid == 0) {
-        const args = [_:null]?[*:0]const u8{ "bin/bwrap", "--version" };
+        const args = [_:null]?[*:0]const u8{ "bin/true", "--version" };
         const env = [_:null]?[*:0]const u8{ "PATH=/opt/pizza/bundle/bin", "HOME=/run/pizza", "TMPDIR=/tmp", "LC_ALL=C" };
-        _ = linux.execve("bin/bwrap", &args, &env);
+        _ = linux.execve("bin/true", &args, &env);
         linux.exit(127);
     }
     return @intCast(pid);
@@ -77,8 +89,8 @@ pub fn sleep() void {
     _ = linux.nanosleep(&delay, null);
 }
 
-/// The failure state never returns or requests a reboot. Continue collecting
-/// children so an initialization error cannot kill PID 1 or accumulate zombies.
+/// Last-resort hold for recursive panic or disposable VM fixtures. Production
+/// shutdown failures enter recovery.zig's supervised console first.
 pub fn degraded() noreturn {
     while (true) {
         while (reap() catch null) |_| {}
@@ -87,40 +99,45 @@ pub fn degraded() noreturn {
     }
 }
 
-pub const ApplicationMode = enum { ui, no_ui, test_exit, bridge_test, session };
+pub const ApplicationMode = enum {
+    ui,
+    no_ui,
+    test_exit,
+    backend_test,
+    storage_test,
+    session,
+    session_test,
+    restart_session,
+};
 
-/// The ordinary application owns business logic and WPE. This static supervisor
-/// only launches and reaps it; a crash never authorizes a reboot or plan retry.
+/// The ordinary application owns business logic and display. This static supervisor
+/// launches and reaps it; main.zig owns shutdown policy and never retries a plan.
 pub fn application(mode: ApplicationMode) !linux.pid_t {
     const pid = linux.fork();
     if (linux.errno(pid) != .SUCCESS) return error.ForkFailed;
     if (pid == 0) {
-        const arg: [*:0]const u8 = switch (mode) {
-            .ui => "--panel",
-            .no_ui => "--no-ui",
-            .test_exit => "--test-exit",
-            .bridge_test => "--self-test",
-            .session => "--session",
-        };
-        const ui_args = [_:null]?[*:0]const u8{ "bin/pizza-maint", "--panel", "share/panel/index.html" };
-        const simple_args = [_:null]?[*:0]const u8{ "bin/pizza-maint", arg };
-        const test_args = [_:null]?[*:0]const u8{ "bin/pizza-maint", "--self-test", "--headless", "--timeout", "90" };
+        const ui_args = [_:null]?[*:0]const u8{"bin/pizza-maint"};
+        const console_args = [_:null]?[*:0]const u8{ "bin/pizza-maint", "--no-ui" };
+        const exit_args = [_:null]?[*:0]const u8{ "bin/pizza-maint", "--test-exit" };
+        const restart_args = [_:null]?[*:0]const u8{ "bin/pizza-maint", "--restart-session" };
+        const normal_session_args = [_:null]?[*:0]const u8{ "bin/pizza-maint", "--session" };
+        const test_args = [_:null]?[*:0]const u8{ "bin/pizza-maint", "--self-test", "--no-tui", "--timeout", "90" };
+        const storage_args = [_:null]?[*:0]const u8{"/pizza-storage-test"};
+        const session_args = [_:null]?[*:0]const u8{ "bin/pizza-maint", "--session", "--reboot-self-test", "--no-tui", "--timeout", "120" };
         const normal_env = [_:null]?[*:0]const u8{
             "PATH=/opt/pizza/bundle/bin", "HOME=/run/pizza",                 "TMPDIR=/tmp",                   "LC_ALL=C",
             "XDG_RUNTIME_DIR=/run/pizza", "XDG_CACHE_HOME=/run/pizza/cache", "XDG_DATA_HOME=/run/pizza/data", "XDG_CONFIG_HOME=/run/pizza/config",
         };
-        // Only the explicitly selected VM bridge fixture disables the WebKit
-        // sandbox, to test the bridge independently from kernel namespace policy.
-        const test_env = [_:null]?[*:0]const u8{
-            "PATH=/opt/pizza/bundle/bin",                 "HOME=/run/pizza",                 "TMPDIR=/tmp",                   "LC_ALL=C",
-            "XDG_RUNTIME_DIR=/run/pizza",                 "XDG_CACHE_HOME=/run/pizza/cache", "XDG_DATA_HOME=/run/pizza/data", "XDG_CONFIG_HOME=/run/pizza/config",
-            "WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1",
-        };
-        _ = linux.execve("bin/pizza-maint", switch (mode) {
+        _ = linux.execve(if (mode == .storage_test) "/pizza-storage-test" else "bin/pizza-maint", switch (mode) {
             .ui => &ui_args,
-            .bridge_test => &test_args,
-            else => &simple_args,
-        }, if (mode == .bridge_test) &test_env else &normal_env);
+            .backend_test => &test_args,
+            .storage_test => &storage_args,
+            .session_test => &session_args,
+            .no_ui => &console_args,
+            .test_exit => &exit_args,
+            .session => &normal_session_args,
+            .restart_session => &restart_args,
+        }, &normal_env);
         linux.exit(127);
     }
     return @intCast(pid);

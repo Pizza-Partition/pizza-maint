@@ -90,6 +90,7 @@ pub const Dashboard = struct {
         const filled: usize = if (value.total == 0) 0 else @min(40, @as(usize, value.committed) * 40 / value.total);
         @memset(bar[0..filled], '#');
         _ = win.print(&.{.{ .text = try a.print("[{s}]", .{bar}) }}, .{ .row_offset = 3, .wrap = .none });
+        _ = win.print(&.{.{ .text = try a.print("Bytes: {s}/{s}", .{ value.completed_bytes, value.total_bytes }) }}, .{ .row_offset = 4, .wrap = .none });
         _ = win.print(&.{.{ .text = try a.dupe(u8, value.message) }}, .{ .row_offset = 5, .wrap = .word });
         if (plan) |actual| {
             for (actual.steps, 0..) |step, i| {
@@ -98,7 +99,7 @@ pub const Dashboard = struct {
                 _ = win.print(&.{.{ .text = try a.print("{d: >2}. {s}: {s}", .{ i + 1, status_text, step.label }) }}, .{ .row_offset = @intCast(8 + i), .wrap = .none });
             }
         }
-        if (win.height > 0) _ = win.print(&.{.{ .text = "q: hide TUI (plan continues) | Ctrl+C: interrupt application" }}, .{ .row_offset = win.height - 1, .wrap = .none });
+        if (win.height > 0) _ = win.print(&.{.{ .text = "q: hide TUI (plan continues) | Ctrl+C: cancel and restore" }}, .{ .row_offset = win.height - 1, .wrap = .none });
         try self.vx.render(self.tty.writer());
         try self.tty.writer().flush();
         self.last_revision = revision;

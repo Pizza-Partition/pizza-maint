@@ -4,6 +4,7 @@ const utils = @import("utils");
 const bundle = @import("bundle");
 const files = @import("files.zig");
 const release = @import("release.zig");
+
 fn less(_: void, left: []const u8, right: []const u8) bool {
     return std.mem.lessThan(u8, left, right);
 }
@@ -13,6 +14,7 @@ fn names(a: std.mem.Allocator, io: std.Io, root: []const u8) ![][]const u8 {
     defer directory.close(io);
     var walker = try directory.walk(a);
     defer walker.deinit();
+
     var entries: std.array_list.Managed([]const u8) = .init(a);
     try entries.append(".");
     while (try walker.next(io)) |entry| {
@@ -31,6 +33,7 @@ fn names(a: std.mem.Allocator, io: std.Io, root: []const u8) ![][]const u8 {
     std.mem.sort([]const u8, entries.items, {}, less);
     return entries.toOwnedSlice();
 }
+
 fn streamFile(io: std.Io, root: std.Io.Dir, name: []const u8, size: u64, writer: *std.Io.Writer) !void {
     const file = try root.openFile(io, name, .{});
     defer file.close(io);
@@ -38,6 +41,7 @@ fn streamFile(io: std.Io, root: std.Io.Dir, name: []const u8, size: u64, writer:
     var reader = file.reader(io, &buffer);
     try reader.interface.streamExact64(writer, size);
 }
+
 fn newc(a: std.mem.Allocator, io: std.Io, overlay: []const u8, writer: *std.Io.Writer) !void {
     const root = try std.Io.Dir.cwd().realPathFileAlloc(io, overlay, a);
     const sorted = try names(a, io, root);
@@ -66,6 +70,7 @@ fn newc(a: std.mem.Allocator, io: std.Io, overlay: []const u8, writer: *std.Io.W
     }
     try archive.finish();
 }
+
 pub fn layer(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, overlay: []const u8, output: []const u8) !void {
     _ = env;
     const file = try std.Io.Dir.cwd().createFile(io, output, .{ .exclusive = true });
@@ -76,6 +81,7 @@ pub fn layer(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, ov
     try writer.interface.flush();
     try file.sync(io);
 }
+
 fn gzipLayer(a: std.mem.Allocator, io: std.Io, overlay: []const u8, output: []const u8) !void {
     const file = try std.Io.Dir.cwd().createFile(io, output, .{ .exclusive = true });
     defer file.close(io);
@@ -89,6 +95,7 @@ fn gzipLayer(a: std.mem.Allocator, io: std.Io, overlay: []const u8, output: []co
     try writer.interface.flush();
     try file.sync(io);
 }
+
 pub fn appendFile(io: std.Io, source: []const u8, output: []const u8) !void {
     const input = try std.Io.Dir.cwd().openFile(io, source, .{});
     defer input.close(io);
@@ -107,6 +114,7 @@ pub fn appendFile(io: std.Io, source: []const u8, output: []const u8) !void {
     }
     try destination.sync(io);
 }
+
 pub fn image(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, root: []const u8, destination: []const u8) !void {
     _ = try @import("root.zig").verify(a, io, root);
     const lock = try release.readLock(a, io, try std.fs.path.join(a, &.{ root, "release.json" }));
@@ -121,16 +129,19 @@ pub fn image(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, ro
     try appendFile(io, compressed, combined);
     try std.Io.Dir.cwd().renamePreserve(combined, .cwd(), output.target, io);
 }
+
 pub fn pack(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, source: []const u8, destination: []const u8) !void {
     _ = env;
     const root = try std.Io.Dir.cwd().realPathFileAlloc(io, source, a);
     _ = try @import("root.zig").verify(a, io, root);
     try packTree(a, io, root, destination, null);
 }
+
 pub fn packTools(a: std.mem.Allocator, io: std.Io, source: []const u8, destination: []const u8) !void {
     const root = try std.Io.Dir.cwd().realPathFileAlloc(io, source, a);
     try packTree(a, io, root, destination, &.{ "pizza", "pizza-tools", "pizza-init" });
 }
+
 fn packTree(a: std.mem.Allocator, io: std.Io, root: []const u8, destination: []const u8, selection: ?[]const []const u8) !void {
     const output = try files.Output.init(a, io, destination, false);
     defer output.deinit(io);

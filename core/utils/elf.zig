@@ -60,10 +60,10 @@ pub const Metadata = struct {
 };
 
 /// GNU_PROPERTY_X86_ISA_1_BASELINE from the x86 ELF ABI.
-pub const x86_isa_baseline: u32 = 1;
-const gnu_property_x86_isa_1_needed = 0xc0008002;
-const nt_gnu_property_type_0 = 5;
-const pt_gnu_property: elf.PT = @fromBackingInt(@intCast(0x6474e553));
+pub const X86_ISA_BASELINE: u32 = 1;
+const GNU_PROPERTY_X86_ISA_1_NEEDED = 0xc0008002;
+const NT_GNU_PROPERTY_TYPE_0 = 5;
+const PT_GNU_PROPERTY: elf.PT = @fromBackingInt(@intCast(0x6474e553));
 
 fn stringAt(allocator: std.mem.Allocator, strings: []const u8, offset: u64) ![]const u8 {
     if (offset >= strings.len) return error.InvalidElf;
@@ -96,7 +96,7 @@ fn noteIsa(bytes: []const u8, header: elf.Header, alignment: u64) !u32 {
         const desc = try region(bytes, desc_offset, note.n_descsz);
         offset = try aligned(try plus(desc_offset, note.n_descsz), alignment);
         if (offset > bytes.len) return error.InvalidElf;
-        if (note.n_type != nt_gnu_property_type_0 or !std.mem.eql(u8, name, "GNU\x00")) continue;
+        if (note.n_type != NT_GNU_PROPERTY_TYPE_0 or !std.mem.eql(u8, name, "GNU\x00")) continue;
         if (header.machine != .X86_64 and header.machine != .@"386") continue;
         var property: u64 = 0;
         while (property < desc.len) {
@@ -104,7 +104,7 @@ fn noteIsa(bytes: []const u8, header: elf.Header, alignment: u64) !u32 {
             const kind = reader.takeInt(u32, header.endian) catch return error.InvalidElf;
             const size = reader.takeInt(u32, header.endian) catch return error.InvalidElf;
             const data = try region(desc, try plus(property, 8), size);
-            if (kind == gnu_property_x86_isa_1_needed) {
+            if (kind == GNU_PROPERTY_X86_ISA_1_NEEDED) {
                 if (data.len != 4) return error.InvalidElf;
                 result |= std.mem.readInt(u32, data[0..4], header.endian);
             }
@@ -202,7 +202,7 @@ pub fn metadataBytes(allocator: std.mem.Allocator, bytes: []const u8) !Metadata 
                 dynamic = p;
             },
             .INTERP => try interp.append(try stringAt(allocator, try region(bytes, p.offset, p.filesz), 0)),
-            .NOTE, pt_gnu_property => isa |= try noteIsa(try region(bytes, p.offset, p.filesz), header, if (p.@"align" == 8) 8 else 4),
+            .NOTE, PT_GNU_PROPERTY => isa |= try noteIsa(try region(bytes, p.offset, p.filesz), header, if (p.@"align" == 8) 8 else 4),
             else => {},
         }
     }
@@ -226,8 +226,10 @@ pub fn metadataBytes(allocator: std.mem.Allocator, bytes: []const u8) !Metadata 
     var verdefnum: u64 = 0;
     if (dynamic) |p| {
         const entry_size: u64 = if (header.is_64) @sizeOf(elf.Elf64_Dyn) else @sizeOf(elf.Elf32_Dyn);
-        if (p.filesz % entry_size != 0) return error.InvalidElf;
-        var dynamics = header.iterateDynamicSectionBuffer(bytes, p.offset, p.filesz);
+        // A segment may include linker padding after the complete DT_NULL.
+        // Inspect only complete entries and still require a full terminator;
+        // never decode a partial entry or treat a truncated table as terminated.
+        var dynamics = header.iterateDynamicSectionBuffer(bytes, p.offset, p.filesz - p.filesz % entry_size);
         var terminated = false;
         while (dynamics.next() catch return error.InvalidElf) |d| {
             if (d.d_tag == elf.DT_NULL) {
@@ -452,12 +454,31 @@ fn testMetadataImage(allocator: std.mem.Allocator) ![]u8 {
     note.memsz = 48;
     note.@"align" = 8;
     try write(Phdr, bytes, header.phoff + 4 * @sizeOf(Phdr), note);
-    try write(elf.Elf64_Nhdr, bytes, 1536, .{ .n_namesz = 4, .n_descsz = 32, .n_type = nt_gnu_property_type_0 });
+    try write(elf.Elf64_Nhdr, bytes, 1536, .{ .n_namesz = 4, .n_descsz = 32, .n_type = NT_GNU_PROPERTY_TYPE_0 });
     @memcpy(bytes[1548..1552], "GNU\x00");
     // ISA-used=v4 is optional; only ISA-needed=baseline may affect the audit.
-    const properties = [_]u32{ 0xc0010002, 4, 8, 0, gnu_property_x86_isa_1_needed, 4, x86_isa_baseline, 0 };
+    const properties = [_]u32{ 0xc0010002, 4, 8, 0, GNU_PROPERTY_X86_ISA_1_NEEDED, 4, X86_ISA_BASELINE, 0 };
     for (properties, 0..) |value, index| std.mem.writeInt(u32, bytes[1552 + index * 4 ..][0..4], value, .little);
     return bytes;
+}
+
+test "dynamic segment padding follows a complete terminator and cannot replace it" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const bytes = try testImage(a, false);
+    const header = try read(Ehdr, bytes, 0);
+    const location = header.phoff + 2 * @sizeOf(Phdr);
+    var dynamic = try read(Phdr, bytes, location);
+    dynamic.filesz += 7;
+    dynamic.memsz = dynamic.filesz;
+    try write(Phdr, bytes, location, dynamic);
+    _ = try metadataBytes(a, bytes);
+    // Truncate in the final DT_NULL: even a zero tag needs its complete entry.
+    dynamic.filesz = 3 * @sizeOf(Dyn) + 7;
+    dynamic.memsz = dynamic.filesz;
+    try write(Phdr, bytes, location, dynamic);
+    try std.testing.expectError(error.InvalidElf, metadataBytes(a, bytes));
 }
 
 test "native metadata resolves sectionless dynamic strings, symbol versions and required ISA" {
@@ -476,7 +497,7 @@ test "native metadata resolves sectionless dynamic strings, symbol versions and 
     try std.testing.expectEqualStrings("legacy", meta.rpath[0]);
     try std.testing.expectEqualStrings("fixture.so", meta.soname[0]);
     try std.testing.expectEqualStrings("/ld.so", meta.interp[0]);
-    try std.testing.expectEqual(x86_isa_baseline, meta.isa);
+    try std.testing.expectEqual(X86_ISA_BASELINE, meta.isa);
     const required = meta.needed_versions.get("libanswer.so").?;
     try std.testing.expectEqual(@as(usize, 1), required.len);
     try std.testing.expectEqualStrings("V1", required[0]);

@@ -103,7 +103,7 @@ fn guestScript(
     );
 }
 
-const params = clap.parseParamsComptime(
+const PARAMS = clap.parseParamsComptime(
     \\-h, --help  Display this help and exit.
     \\--config <str>  Pinned cloud-image fixture configuration.
     \\--bundle <str>  Local bundle directory (required for execution).
@@ -123,7 +123,7 @@ pub fn run(
 ) !void {
     var iter: clap.args.SliceIterator = .{ .args = argv };
     var diagnostic: clap.Diagnostic = .{};
-    var parsed = clap.parseEx(clap.Help, &params, clap.parsers.default, &iter, .{
+    var parsed = clap.parseEx(clap.Help, &PARAMS, clap.parsers.default, &iter, .{
         .allocator = allocator,
         .diagnostic = &diagnostic,
     }) catch |err| {
@@ -133,7 +133,7 @@ pub fn run(
     defer parsed.deinit();
     if (parsed.args.help != 0) {
         try std.Io.File.stdout().writeStreamingAll(io, "Usage: pizza-tests matrix [options]\n");
-        return clap.helpToFile(io, .stdout(), clap.Help, &params, .{});
+        return clap.helpToFile(io, .stdout(), clap.Help, &PARAMS, .{});
     }
     const config = try std.json.parseFromSliceLeaky(
         std.json.Value,
@@ -234,15 +234,15 @@ pub fn run(
         var command: std.array_list.Managed([]const u8) = .init(allocator);
         // Bootstrap without a shell inside the isolated root. The checker establishes
         // the bundle-root CWD before loading plugins or starting child processes.
-        const loader = try std.fs.path.join(allocator, &.{ bundle.prefix, loader_relative });
+        const loader = try std.fs.path.join(allocator, &.{ bundle.PREFIX, loader_relative });
         try command.append(loader);
         try command.append(
             try std.fs.path.join(
                 allocator,
-                &.{ bundle.prefix, binary },
+                &.{ bundle.PREFIX, binary },
             ),
         );
-        try command.appendSlice(&.{ "--bundle-root", bundle.prefix });
+        try command.appendSlice(&.{ "--bundle-root", bundle.PREFIX });
         try command.appendSlice(parsed.args.@"binary-arg");
         const userdata = .{
             .write_files = .{
@@ -405,7 +405,7 @@ test "matrix command preserves repeated checker arguments including leading dash
         "--binary-arg=",
         "--timeout=42",
     } };
-    var parsed = try clap.parseEx(clap.Help, &params, clap.parsers.default, &iter, .{
+    var parsed = try clap.parseEx(clap.Help, &PARAMS, clap.parsers.default, &iter, .{
         .allocator = std.testing.allocator,
     });
     defer parsed.deinit();

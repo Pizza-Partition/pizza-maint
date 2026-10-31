@@ -6,31 +6,37 @@ const cmdline = @import("cmdline.zig");
 const mounts = @import("mounts.zig");
 const modules = @import("modules.zig");
 const supervisor = @import("supervisor.zig");
+const recovery = @import("recovery.zig");
+const emergency = @import("emergency.zig");
+var panicking: bool = false;
 
 pub const panic = std.debug.FullPanic(panicImpl);
 
-fn panicImpl(message: []const u8, trace: ?usize) noreturn {
-    if (linux.getpid() != 1) std.debug.defaultPanic(message, trace);
-    // Avoid allocator and logging locks in the emergency path.
-    const prefix = "PIZZA_MAINT_PANIC: PID 1 remains alive: ";
-    _ = linux.write(2, prefix, prefix.len);
-    _ = linux.write(2, message.ptr, message.len);
-    _ = linux.write(2, "\n", 1);
-    supervisor.degraded();
+fn panicImpl(message: []const u8, return_addr: ?usize) noreturn {
+    if (linux.getpid() != 1) std.debug.defaultPanic(message, return_addr);
+    if (@atomicRmw(bool, &panicking, .Xchg, true, .monotonic)) {
+        emergency.write("PIZZA_RECURSIVE_PANIC: PID 1 emergency hold\n");
+        supervisor.degraded();
+    }
+    emergency.write("PIZZA_MAINT_PANIC: ");
+    emergency.write(message);
+    emergency.write("\n");
+    recovery.shutdown(.reboot);
 }
 
-/// Runs a RAM-only maintenance PID 1. Initialization failures retain a live,
-/// diagnostic supervisor; only explicitly selected VM tests request poweroff.
+/// RAM-only PID 1. Fatal failures request controlled reboot; unsuccessful
+/// shutdown enters a supervised rescue console without retrying the plan.
 pub fn main(init: std.process.Init) !void {
     if (linux.getpid() != 1) return error.NotPid1;
     supervisor.installSignals() catch |err| fail(err);
+    power.configure() catch |err| fail(err);
     run(init.arena.allocator(), init.io) catch |err| fail(err);
-    supervisor.degraded();
+    recovery.shutdown(.reboot);
 }
 
 fn fail(err: anyerror) noreturn {
-    std.log.err("PIZZA_MAINT_DEGRADED: {t}; PID 1 remains alive; executor disabled", .{err});
-    supervisor.degraded();
+    std.log.err("PIZZA_MAINT_DEGRADED: {t}; requesting controlled reboot", .{err});
+    recovery.shutdown(.reboot);
 }
 
 fn run(allocator: std.mem.Allocator, io: std.Io) !void {
@@ -44,60 +50,95 @@ fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     if (parameters.boot == .smoke) {
         std.log.info("PIZZA_MAINT_SMOKE_READY", .{});
         try power.poweroff();
-        return;
     }
     const module_count = try modules.load(allocator, io);
-    if (linux.errno(linux.chdir(bundle.prefix)) != .SUCCESS) return error.BundleWorkingDirectoryUnavailable;
+    if (linux.errno(linux.chdir(bundle.PREFIX)) != .SUCCESS) return error.BundleWorkingDirectoryUnavailable;
     var root = try std.Io.Dir.cwd().openDir(io, ".", .{});
     defer root.close(io);
     const fs = @import("utils").filesystem;
     const kind = try fs.filesystemType(root);
-    if (kind != fs.tmpfs_magic and kind != fs.ramfs_magic) return error.BundleMustBeRam;
+    if (kind != fs.TMPFS_MAGIC and kind != fs.RAMFS_MAGIC) return error.BundleMustBeRam;
     std.log.info("PIZZA_MAINT_BUNDLE_CWD_READY", .{});
     if (parameters.boot == .selftest) {
         if (module_count == 0) return error.TestNeedsLoadableModule;
         try selftest(io);
         return;
     }
-    if (parameters.boot == .bridge_test) {
-        const app = try supervisor.application(.bridge_test);
+    if (parameters.boot == .backend_test or parameters.boot == .storage_test) {
+        const storage_test = parameters.boot == .storage_test;
+        const app = try supervisor.application(if (storage_test) .storage_test else .backend_test);
         while (true) {
             while (try supervisor.reap()) |child| {
                 if (child.pid != app) continue;
                 if (child.status != 0) {
-                    std.log.err("Bridge application wait status={d}", .{child.status});
-                    return error.BridgeApplicationFailed;
+                    std.log.err("Diagnostic application wait status={d}", .{child.status});
+                    return error.BackendApplicationFailed;
                 }
-                std.log.info("PIZZA_INIT_BRIDGE_CHILD_READY: application completed and reaped", .{});
+                if (storage_test)
+                    std.log.info("PIZZA_INIT_STORAGE_CHILD_READY: application completed and reaped", .{})
+                else
+                    std.log.info("PIZZA_INIT_BACKEND_CHILD_READY: application completed and reaped", .{});
                 try power.poweroff();
-                return;
             }
             supervisor.sleep();
         }
     }
+    // The v4 restart path is selected by a fixed firmware namespace, never by
+    // an arbitrary command-line path. Its ordinary child authenticates the pin.
+    if (std.Io.Dir.cwd().access(io, "/sys/firmware/efi/efivars/PizzaSession-137310f9-bc70-4fea-8571-1a1a3fca2c38", .{})) {
+        const child = try supervisor.application(.restart_session);
+        while (true) {
+            while (try supervisor.reap()) |exited| {
+                if (exited.pid != child) continue;
+                if (exited.status != 0) {
+                    std.log.err("PIZZA_RESTART_FAILED: child status={d}; recovery console; boot binding retained", .{exited.status});
+                    // Rebooting with the retained maintenance-first lease would
+                    // silently rerun startup. Hold for diagnosis or explicit recovery.
+                    recovery.run(.rescue, .{});
+                }
+                std.log.info("PIZZA_RESTART_RETURN_READY", .{});
+                recovery.shutdown(.reboot);
+            }
+            if (recovery.fromSignals(supervisor.takeSignals())) |request| recovery.run(request, .{});
+            supervisor.sleep();
+        }
+    } else |err| if (err != error.FileNotFound) return err;
     const handoff = if (std.Io.Dir.cwd().access(io, "/etc/pizza/session.json", .{})) true else |err| blk: {
         if (err != error.FileNotFound) return err;
         break :blk false;
     };
     if (parameters.plan_id != null and !handoff) return error.MissingProtectedHandoff;
-    if (parameters.boot == .transition_test and !handoff) return error.MissingProtectedHandoff;
-    const application = try supervisor.application(if (handoff) .session else if (parameters.kiosk == .disabled) .no_ui else .ui);
+    if (parameters.boot == .reboot_test and !handoff) return error.MissingProtectedHandoff;
+    const acceptance = parameters.boot == .reboot_test and acceptanceFile(io);
+    var memory: @import("memory.zig").Peak = .{};
+    if (acceptance) {
+        const file = try std.Io.Dir.cwd().openFile(io, "/sys/block/vda/ro", .{});
+        defer file.close(io);
+        var buffer: [16]u8 = undefined;
+        var reader = file.readerStreaming(io, &buffer);
+        const readonly = try reader.interface.allocRemaining(allocator, .limited(16));
+        if (!std.mem.eql(u8, std.mem.trim(u8, readonly, "\r\n"), "1")) return error.OriginalDiskMustBeReadOnly;
+        std.log.info("PIZZA_ORIGINAL_READONLY_READY: original disk is read-only at block layer", .{});
+    }
+    if (acceptance) try memory.sample(io);
+    const application = try supervisor.application(if (acceptance) .session_test else if (handoff) .session else if (parameters.kiosk == .disabled) .no_ui else .ui);
     std.log.info("PIZZA_MAINT_READY: application PID {d}; static supervisor active", .{application});
     while (true) {
+        if (acceptance) try memory.sample(io);
         while (try supervisor.reap()) |child| {
-            if (child.pid == application and parameters.boot == .transition_test) {
+            if (child.pid == application and parameters.boot == .reboot_test) {
                 if (child.status != 0) return error.TransitionApplicationFailed;
+                if (acceptance) try memory.report(io);
                 std.log.info("PIZZA_TRANSITION_MAINTENANCE_READY: real session completed and reaped", .{});
                 try power.poweroff();
-                return;
             }
-            if (child.pid == application)
-                std.log.err("PIZZA_INIT_APPLICATION_EXITED: status={d}; PID 1 remains alive; no automatic plan retry", .{child.status})
-            else
-                std.log.info("Adopted child {d} exited: {d}", .{ child.pid, child.status });
+            if (child.pid == application) {
+                std.log.err("PIZZA_INIT_APPLICATION_EXITED: status={d}; controlled reboot; no automatic plan retry", .{child.status});
+                recovery.shutdown(.reboot);
+            } else std.log.info("Adopted child {d} exited: {d}", .{ child.pid, child.status });
         }
-        if (supervisor.takeSignals() != 0)
-            std.log.info("Maintenance supervisor received signal; remaining available", .{});
+        if (recovery.fromSignals(supervisor.takeSignals())) |request|
+            recovery.run(request, .{});
         supervisor.sleep();
     }
 }
@@ -156,4 +197,9 @@ fn selftest(io: std.Io) !void {
     std.log.info("PIZZA_MAINT_SIGNALS_READY: TERM and INT handled", .{});
     std.log.info("PIZZA_MAINT_SELFTEST_READY: supervisor alive for at least 3 seconds", .{});
     try power.poweroff();
+}
+
+fn acceptanceFile(io: std.Io) bool {
+    std.Io.Dir.cwd().access(io, "/etc/pizza/acceptance", .{}) catch return false;
+    return true;
 }

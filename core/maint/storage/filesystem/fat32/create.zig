@@ -1,0 +1,61 @@
+//! Native FAT32 byte encoding. The common allocator places the root directory.
+const std = @import("std");
+const f = @import("format.zig");
+const model = @import("../../model.zig");
+const semantic = @import("../../semantic.zig");
+const mutation = @import("../../mutation.zig");
+/// Deterministic FAT32 creation. No complete FatFs algorithm is invoked.
+pub fn encode(a: std.mem.Allocator, io: std.Io, target: model.Target, supplied: f.Geometry, placements: []const semantic.Placement, partition_offset: u64) !mutation.MutationSet {
+    var collector: mutation.Collector = .{ .allocator = a, .target = target };
+    var g = supplied;
+    const sector = g.sector;
+    const root_range = for (placements) |p| {
+        if (p.id == 1 and p.ranges.len == 1) break p.ranges[0];
+    } else return error.MissingAllocationPlacement;
+    g.root = @intCast((root_range.offset - g.dataStart()) / g.clusterBytes() + 2);
+    const per_cluster = g.per_cluster;
+    const boot = try a.alloc(u8, sector);
+    @memset(boot, 0);
+    @memcpy(boot[0..3], &@as([3]u8, .{ 0xeb, 0x58, 0x90 }));
+    @memcpy(boot[3..11], "PIZZA   ");
+    f.put16(boot, 11, @intCast(sector));
+    boot[13] = @intCast(per_cluster);
+    f.put16(boot, 14, @intCast(g.reserved));
+    boot[16] = @intCast(g.copies);
+    boot[21] = g.media;
+    f.put16(boot, 24, 63);
+    f.put16(boot, 26, 255);
+    const hidden = partition_offset / sector;
+    if (hidden > std.math.maxInt(u32)) return error.FatPartitionOffsetOverflow;
+    f.put32(boot, 28, @intCast(hidden));
+    f.put32(boot, 32, g.total);
+    f.put32(boot, 36, g.fat_sectors);
+    f.put32(boot, 44, g.root);
+    f.put16(boot, 48, g.info);
+    f.put16(boot, 50, g.backup);
+    boot[64] = 0x80;
+    boot[66] = 0x29;
+    std.Io.random(io, boot[67..71]);
+    @memcpy(boot[71..82], "NO NAME    ");
+    @memcpy(boot[82..90], "FAT32   ");
+    f.put16(boot, 510, 0xaa55);
+    const fat = try a.alloc(u8, g.fatBytes());
+    @memset(fat, 0);
+    f.put32(fat, 0, 0x0fffff00 | @as(u32, g.media));
+    f.put32(fat, 4, f.EOC);
+    f.put32(fat, @as(usize, g.root) * 4, f.EOC);
+    const zeros = try a.alloc(u8, @max(g.clusterBytes(), g.reserved * g.sector));
+    @memset(zeros, 0);
+    try collector.write(0, zeros[0 .. g.reserved * g.sector]);
+    for (0..g.copies) |copy| try collector.write(g.fatOffset(@intCast(copy)), fat);
+    try collector.write(try g.offset(g.root), zeros[0..g.clusterBytes()]);
+    try collector.write(0, boot);
+    try collector.write(@as(u64, g.backup) * g.sector, boot);
+    const info = try a.alloc(u8, g.sector);
+    f.makeInfo(info, g.clusters - 1, if (g.root == 2) 3 else 2);
+    try collector.write(@as(u64, g.info) * g.sector, info);
+    try collector.write((@as(u64, g.backup) + g.info) * g.sector, info);
+    const changes = try collector.finish();
+    for (@constCast(changes.writes)) |*w| w.kind = .discard;
+    return changes;
+}

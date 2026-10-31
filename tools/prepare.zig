@@ -3,13 +3,11 @@ const clap = @import("clap");
 
 const bundle_build = @import("bundle_build");
 
-const params = clap.parseParamsComptime(
+const PARAMS = clap.parseParamsComptime(
     \\-h, --help  Display this help and exit.
-    \\--patchelf <str>  patchelf 0.19.2 executable (default: PATH).
     \\--runtime <str>  Verified release download directory (required).
     \\--init <str>  Static pizza-init PID 1 binary (required).
-    \\--maintenance <str>  Maintenance application binary (required).
-    \\--panel <str>  Built frontend directory (required).
+    \\--maintenance <str>  Maintenance binary linked for the bundle (required).
     \\--destination <str>  New bundle directory (required).
 );
 
@@ -23,7 +21,7 @@ pub fn run(
 ) !void {
     var iter: clap.args.SliceIterator = .{ .args = argv };
     var diagnostic: clap.Diagnostic = .{};
-    var parsed = clap.parseEx(clap.Help, &params, clap.parsers.default, &iter, .{
+    var parsed = clap.parseEx(clap.Help, &PARAMS, clap.parsers.default, &iter, .{
         .allocator = allocator,
         .diagnostic = &diagnostic,
     }) catch |err| {
@@ -37,13 +35,12 @@ pub fn run(
             io,
             "Usage: pizza-tools prepare-bundle [options]\n",
         );
-        return clap.helpToFile(io, .stdout(), clap.Help, &params, .{});
+        return clap.helpToFile(io, .stdout(), clap.Help, &PARAMS, .{});
     }
 
     const runtime = parsed.args.runtime orelse return error.MissingRuntime;
     const init_binary = parsed.args.init orelse return error.MissingInitBinary;
     const maintenance = parsed.args.maintenance orelse return error.MissingMaintenanceBinary;
-    const panel = parsed.args.panel orelse return error.MissingPanelAssets;
     const destination = parsed.args.destination orelse return error.MissingDestination;
-    try bundle_build.assemble(allocator, io, environ, .{ .runtime = runtime, .init = init_binary, .maintenance = maintenance, .panel = panel, .destination = destination, .patchelf = parsed.args.patchelf orelse "patchelf" });
+    try bundle_build.assemble(allocator, io, environ, .{ .runtime = runtime, .init = init_binary, .maintenance = maintenance, .destination = destination });
 }

@@ -2,7 +2,7 @@
 const std = @import("std");
 
 pub const Parameters = struct {
-    boot: enum { normal, smoke, selftest, bridge_test, transition_test } = .normal,
+    boot: enum { normal, smoke, selftest, backend_test, storage_test, reboot_test } = .normal,
     plan_id: ?[]const u8 = null,
     kiosk: enum { enabled, disabled } = .enabled,
     journal: enum { enabled, disabled, fsync_fail } = .enabled,

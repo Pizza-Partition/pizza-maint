@@ -5,7 +5,7 @@ const initramfs = @import("initramfs");
 const journal = @import("journal");
 const clap = @import("clap");
 const h = @import("harness.zig");
-const params = clap.parseParamsComptime(
+const PARAMS = clap.parseParamsComptime(
     \\-h, --help  Display this help and exit.
     \\--binary <str>  Static journal fixture PID 1 (supplied by zig build test-journal).
     \\--kernel <str>  Kernel with built-in virtio/ext4 (default: KERNEL or /boot/vmlinuz-linux).
@@ -15,9 +15,9 @@ const params = clap.parseParamsComptime(
 
 pub fn run(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, checkout: []const u8, argv: []const []const u8) !void {
     var iter: clap.args.SliceIterator = .{ .args = argv };
-    var parsed = try clap.parseEx(clap.Help, &params, clap.parsers.default, &iter, .{ .allocator = a });
+    var parsed = try clap.parseEx(clap.Help, &PARAMS, clap.parsers.default, &iter, .{ .allocator = a });
     defer parsed.deinit();
-    if (parsed.args.help != 0) return clap.helpToFile(io, .stdout(), clap.Help, &params, .{});
+    if (parsed.args.help != 0) return clap.helpToFile(io, .stdout(), clap.Help, &PARAMS, .{});
     const binary = try utils.filesystem.resolveOutputPath(a, io, checkout, parsed.args.binary orelse return error.MissingJournalFixture);
     const meta = try utils.elf.metadata(a, io, binary);
     if (meta.interp.len != 0 or meta.needed.len != 0) return error.Pid1MustBeStatic;

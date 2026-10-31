@@ -219,10 +219,10 @@ test "payload limits and malformed boundary JSON stop before unsafe allocation o
     try std.testing.expectEqual(.invalid_boundary, (try j.scan(a, bytes.items)).tail);
     bytes.shrinkRetainingCapacity(prefix);
     try append(a, &bytes, 2, 101, 0, .note, "");
-    std.mem.writeInt(u32, bytes.items[prefix + 32 ..][0..4], j.max_payload + 1, .little);
+    std.mem.writeInt(u32, bytes.items[prefix + 32 ..][0..4], j.MAX_PAYLOAD + 1, .little);
     const oversized = try j.scan(a, bytes.items);
     try std.testing.expectEqual(.oversized_payload, oversized.tail);
     try std.testing.expectEqual(prefix, oversized.valid_bytes);
-    const payload = try a.alloc(u8, j.max_payload + 1);
+    const payload = try a.alloc(u8, j.MAX_PAYLOAD + 1);
     try std.testing.expectError(error.PayloadTooLarge, j.encodeHeader(.{ .seq = 2, .monotonic_ns = 101, .step_id = 0, .phase = .note, .payload = payload }));
 }

@@ -1,7 +1,9 @@
 # Manual hardware validation procedure
 
+本流程对应 [实施计划 M1/M2/M4](superpowers/plans/2026-10-21-pizza-maintenance-plan.md)。`v0.4.1` 基础包和当前应用的隔离 QEMU 验收已通过，实机尚未验收。
+
 仅在 VM 全量验收通过、核心模拟探针完成后执行。使用可牺牲的测试机器和模拟 plan；
-在引入真实 storage 操作之前完成。本工程骨架不具备宿主切换功能。
+在引入真实 storage 操作之前完成。生产切换命令见 [transition.md](transition.md)，当前计划仍只执行模拟步骤。
 
 1. 记录硬件、CPU ISA、固件、GPU、NVMe/controller、内核和模块版本。确定 journal
    home 不在未来被卸载/修改的 filesystem 上。保存 serial/remote console 记录。
@@ -13,9 +15,9 @@
    切换。核对 staged/loaded marker 生命周期与取消路径。
 5. 做模拟往返：RAM root、原根 ro（明确 journal 例外）、20 步、durable intent/
    commit、正常 reboot、完整 report。检查原根内容和 journal 的独立持久性。
-6. 测真实 DRM/evdev、字体、EGL/llvmpipe、WebKit sandbox。禁用/终止 kiosk，确认
-   TUI 接管，API、执行器和 journal 继续按约定运行。
-7. 分别注入 WebView/bridge 初始化失败、journal 不可用、fsync failure、step failure 与
+6. 验收终端仪表盘与文本降级，确认显示失败时执行器和 journal 继续按约定运行。
+   后续接入原生 GUI 后，补测 UEFI framebuffer、simpledrm、DRM 与 kexec 显示交接。
+7. 分别注入 终端初始化失败、journal 不可用、fsync failure、step failure 与
    intent 后 interruption。journal 不可靠时应拒绝启动或在下一边界停止执行。
 8. 采集双阶段内存峰值、总 RSS/PSS、tmpfs/bundle 和内核开销，对照已确定的预算。
 9. 核查 `systemctl kexec` 的服务停止、文件系统卸载与控制器 quiesce 行为；单独

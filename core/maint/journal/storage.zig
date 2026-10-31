@@ -92,8 +92,8 @@ pub const Writer = struct {
         const seq = std.math.add(u64, self.state.seq, 1) catch return error.SequenceExhausted;
         const record: journal.Record = .{ .seq = seq, .monotonic_ns = monotonic_ns, .step_id = step_id, .phase = phase, .payload = payload };
         const header = try journal.encodeHeader(record);
-        const end = self.offset + journal.header_bytes + payload.len;
-        if (end > journal.max_file_bytes) return error.JournalTooLarge;
+        const end = self.offset + journal.HEADER_BYTES + payload.len;
+        if (end > journal.MAX_FILE_BYTES) return error.JournalTooLarge;
         try self.state.apply(self.arena.allocator(), record);
         // From this point onward, bytes or durability may be uncertain. Poison
         // the handle on every IO error, including cancellation.
@@ -103,7 +103,7 @@ pub const Writer = struct {
             return error.InjectedShortWrite;
         }
         try self.file.writePositionalAll(io, &header, self.offset);
-        try self.file.writePositionalAll(io, payload, self.offset + journal.header_bytes);
+        try self.file.writePositionalAll(io, payload, self.offset + journal.HEADER_BYTES);
         if (self.faults.fsync_at == seq) return error.InjectedFsyncFailure;
         try self.file.sync(io);
         self.offset = end;
@@ -131,7 +131,7 @@ pub fn readFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !jou
 fn readFrom(allocator: std.mem.Allocator, io: std.Io, file: std.Io.File) !journal.Scan {
     const stat = try file.stat(io);
     if (stat.kind != .file) return error.JournalMustBeRegular;
-    if (stat.size > journal.max_file_bytes) return error.JournalTooLarge;
+    if (stat.size > journal.MAX_FILE_BYTES) return error.JournalTooLarge;
     const bytes = try allocator.alloc(u8, @intCast(stat.size));
     if (try file.readPositionalAll(io, bytes, 0) != bytes.len) return error.JournalChangedDuringRead;
     return journal.scan(allocator, bytes);

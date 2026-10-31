@@ -1,8 +1,10 @@
 //! Offline Rekor v1 inclusion verification and RFC 6962 certificate transparency.
 const std = @import("std");
-const encoding = @import("encoding.zig");
+const encoding = @import("utils").asn1;
 const schema = @import("schema.zig");
-const certs = @import("certificate.zig");
+const certs = @import("utils").x509;
+// RFC 6962 embedded SCT list: 1.3.6.1.4.1.11129.2.4.2.
+const SCT_OID = "\x2b\x06\x01\x04\x01\xd6\x79\x02\x04\x02";
 
 pub fn logKey(a: std.mem.Allocator, logs: []const schema.Log, id: []const u8, time: u64) !certs.Key {
     for (logs) |log| {
@@ -118,7 +120,7 @@ fn inclusion(a: std.mem.Allocator, key: certs.Key, id: []const u8, body: []const
 }
 
 pub fn sct(a: std.mem.Allocator, logs: []const schema.Log, leaf: certs.Certificate, issuer: certs.Certificate, now: u64) !void {
-    const serialized = (try encoding.Der.one(try leaf.extension(certs.sct_oid), 4)).data;
+    const serialized = (try encoding.Element.one(try leaf.extension(SCT_OID), 4)).data;
     if (serialized.len < 4) return error.InvalidAttestation;
     if (std.mem.readInt(u16, serialized[0..2], .big) != serialized.len - 2 or std.mem.readInt(u16, serialized[2..4], .big) != serialized.len - 4) return error.InvalidAttestation;
     const data = serialized[4..];
@@ -137,7 +139,7 @@ pub fn sct(a: std.mem.Allocator, logs: []const schema.Log, leaf: certs.Certifica
     var rest = leaf.extensions.data;
     while (rest.len > 0) {
         const ext = try certs.Extension.take(&rest);
-        if (!std.mem.eql(u8, ext.oid, certs.sct_oid)) try extensions.writer.writeAll(ext.raw);
+        if (!std.mem.eql(u8, ext.oid, SCT_OID)) try extensions.writer.writeAll(ext.raw);
     }
     const wrapper = try encoding.wrap(a, 0xa3, try encoding.wrap(a, 0x30, extensions.written()));
     const precert = try encoding.wrap(a, 0x30, try std.mem.concat(a, u8, &.{ leaf.tbs.data[0 .. leaf.tbs.data.len - leaf.extensions_wrapper.raw.len], wrapper }));

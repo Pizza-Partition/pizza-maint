@@ -1,0 +1,7 @@
+.{
+    .name = .pizza_protocol,
+    .fingerprint = 0x5e6efb1a9e50ebf4,
+    .version = "4.0.0",
+    .minimum_zig_version = "0.17.0",
+    .paths = .{ "build.zig", "build.zig.zon", "root.zig", "generated.zig", "contract.json", "generated", "README.md", "manifest.json" },
+}

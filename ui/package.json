@@ -1,15 +1,10 @@
 {
-  "name": "pizza-panel",
+  "name": "pizza-dev-tools",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=22"
-  },
-  "scripts": {
-    "build": "node build.mjs",
-    "test": "node --test execution/gui/test/*.test.mjs",
-    "check": "node --check execution/gui/src/main.js && node --check execution/gui/src/validate.js"
   },
   "devDependencies": {
     "prettier": "3.9.10"

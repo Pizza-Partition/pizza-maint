@@ -4,14 +4,14 @@ const proto = @import("proto");
 
 pub const Writer = @import("journal/storage.zig").Writer;
 pub const readFile = @import("journal/storage.zig").readFile;
-pub const header_bytes = proto.wire.journal_header_bytes;
-pub const magic = proto.wire.journal_magic;
+pub const HEADER_BYTES = proto.wire.JOURNAL_HEADER_BYTES;
+pub const MAGIC = proto.wire.JOURNAL_MAGIC;
 pub const Phase = proto.JournalPhase;
-pub const format_version: u16 = 1;
-pub const max_payload = 64 * 1024;
-pub const max_file_bytes = 64 * 1024 * 1024;
+pub const FORMAT_VERSION: u16 = 1;
+pub const MAX_PAYLOAD = 64 * 1024;
+pub const MAX_FILE_BYTES = 64 * 1024 * 1024;
 pub const Durability = enum { durable, degraded };
-const offsets = proto.wire.journal_offsets;
+const Offsets = proto.wire.JournalOffsets;
 
 pub const Record = struct {
     seq: u64,
@@ -145,23 +145,23 @@ pub const Scan = struct {
 /// Allocates record/state indexes; payloads borrow `bytes`. Stops at the first
 /// invalid record without resynchronizing or modifying the source journal.
 pub fn scan(allocator: std.mem.Allocator, bytes: []const u8) !Scan {
-    if (bytes.len > max_file_bytes) return error.JournalTooLarge;
+    if (bytes.len > MAX_FILE_BYTES) return error.JournalTooLarge;
     var records: std.ArrayList(Record) = .empty;
     var state: State = .{};
     var position: usize = 0;
     var tail: Tail = .clean;
     while (position < bytes.len) {
         const remaining = bytes[position..];
-        if (remaining.len < header_bytes) {
+        if (remaining.len < HEADER_BYTES) {
             tail = .short_header;
             break;
         }
-        const header: *const [header_bytes]u8 = remaining[0..header_bytes];
-        if (get(u32, header, offsets.magic) != magic or get(u16, header, offsets.header_bytes) != header_bytes) {
+        const header: *const [HEADER_BYTES]u8 = remaining[0..HEADER_BYTES];
+        if (get(u32, header, Offsets.MAGIC) != MAGIC or get(u16, header, Offsets.HEADER_BYTES) != HEADER_BYTES) {
             tail = .invalid_header;
             break;
         }
-        if (get(u16, header, offsets.version) != format_version) {
+        if (get(u16, header, Offsets.VERSION) != FORMAT_VERSION) {
             tail = .unsupported_version;
             break;
         }
@@ -169,25 +169,25 @@ pub fn scan(allocator: std.mem.Allocator, bytes: []const u8) !Scan {
             tail = .invalid_header;
             break;
         }
-        const phase = std.enums.fromInt(Phase, header[offsets.phase]) orelse {
+        const phase = std.enums.fromInt(Phase, header[Offsets.PHASE]) orelse {
             tail = .invalid_header;
             break;
         };
-        const length = get(u32, header, offsets.payload_len);
-        if (length > max_payload) {
+        const length = get(u32, header, Offsets.PAYLOAD_LEN);
+        if (length > MAX_PAYLOAD) {
             tail = .oversized_payload;
             break;
         }
-        if (remaining.len - header_bytes < length) {
+        if (remaining.len - HEADER_BYTES < length) {
             tail = .short_payload;
             break;
         }
-        const payload = remaining[header_bytes..][0..length];
-        if (checksum(header.*, payload) != get(u32, header, offsets.crc32)) {
+        const payload = remaining[HEADER_BYTES..][0..length];
+        if (checksum(header.*, payload) != get(u32, header, Offsets.CRC32)) {
             tail = .checksum;
             break;
         }
-        const record: Record = .{ .seq = get(u64, header, offsets.seq), .monotonic_ns = get(u64, header, offsets.monotonic_ns), .step_id = get(u32, header, offsets.step_id), .phase = phase, .payload = payload };
+        const record: Record = .{ .seq = get(u64, header, Offsets.SEQ), .monotonic_ns = get(u64, header, Offsets.MONOTONIC_NS), .step_id = get(u32, header, Offsets.STEP_ID), .phase = phase, .payload = payload };
         state.apply(allocator, record) catch |err| switch (err) {
             error.InvalidSequence => {
                 tail = .sequence;
@@ -204,40 +204,40 @@ pub fn scan(allocator: std.mem.Allocator, bytes: []const u8) !Scan {
             else => return err,
         };
         try records.append(allocator, record);
-        position += header_bytes + length;
+        position += HEADER_BYTES + length;
     }
     return .{ .records = try records.toOwnedSlice(allocator), .state = state, .valid_bytes = position, .tail = tail };
 }
 
 /// All reserved bytes are zero and CRC-32/ISO-HDLC covers header plus payload.
-pub fn encodeHeader(record: Record) ![header_bytes]u8 {
-    if (record.payload.len > max_payload) return error.PayloadTooLarge;
-    var header: [header_bytes]u8 = @splat(0);
-    put(u32, &header, offsets.magic, magic);
-    put(u16, &header, offsets.version, format_version);
-    put(u16, &header, offsets.header_bytes, header_bytes);
-    put(u64, &header, offsets.seq, record.seq);
-    put(u64, &header, offsets.monotonic_ns, record.monotonic_ns);
-    put(u32, &header, offsets.step_id, record.step_id);
-    header[offsets.phase] = @backingInt(record.phase);
-    put(u32, &header, offsets.payload_len, @intCast(record.payload.len));
-    put(u32, &header, offsets.crc32, checksum(header, record.payload));
+pub fn encodeHeader(record: Record) ![HEADER_BYTES]u8 {
+    if (record.payload.len > MAX_PAYLOAD) return error.PayloadTooLarge;
+    var header: [HEADER_BYTES]u8 = @splat(0);
+    put(u32, &header, Offsets.MAGIC, MAGIC);
+    put(u16, &header, Offsets.VERSION, FORMAT_VERSION);
+    put(u16, &header, Offsets.HEADER_BYTES, HEADER_BYTES);
+    put(u64, &header, Offsets.SEQ, record.seq);
+    put(u64, &header, Offsets.MONOTONIC_NS, record.monotonic_ns);
+    put(u32, &header, Offsets.STEP_ID, record.step_id);
+    header[Offsets.PHASE] = @backingInt(record.phase);
+    put(u32, &header, Offsets.PAYLOAD_LEN, @intCast(record.payload.len));
+    put(u32, &header, Offsets.CRC32, checksum(header, record.payload));
     return header;
 }
 
-fn checksum(header: [header_bytes]u8, payload: []const u8) u32 {
+fn checksum(header: [HEADER_BYTES]u8, payload: []const u8) u32 {
     var clean = header;
-    @memset(clean[offsets.crc32..][0..4], 0);
+    @memset(clean[Offsets.CRC32..][0..4], 0);
     var crc = std.hash.Crc32.init();
     crc.update(&clean);
     crc.update(payload);
     return crc.final();
 }
 
-fn get(comptime T: type, header: *const [header_bytes]u8, offset: usize) T {
+fn get(comptime T: type, header: *const [HEADER_BYTES]u8, offset: usize) T {
     return std.mem.readInt(T, header[offset..][0..@sizeOf(T)], .little);
 }
-fn put(comptime T: type, header: *[header_bytes]u8, offset: usize, value: T) void {
+fn put(comptime T: type, header: *[HEADER_BYTES]u8, offset: usize, value: T) void {
     std.mem.writeInt(T, header[offset..][0..@sizeOf(T)], value, .little);
 }
 

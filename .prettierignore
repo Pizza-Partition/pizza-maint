@@ -4,8 +4,11 @@
 .zig-cache/
 zig-out/
 zig-pkg/
-ui/execution/gui/dist/
 ui/node_modules/
 .cache/
 test/artifacts/
 dist/
+# Preserve exact upstream bytes for pinned bootstrap hashes and signed TUF fixtures.
+build/bundle/trust/root.json
+test/fixtures/sigstore/trusted_root.json
+test/fixtures/sigstore/tuf/

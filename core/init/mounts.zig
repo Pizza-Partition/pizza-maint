@@ -11,6 +11,9 @@ pub fn setup(io: std.Io) !void {
     std.log.info("PIZZA_MAINT_RAM_ROOT_READY", .{});
     try mount(io, "/proc", "proc", linux.MS.NOSUID | linux.MS.NODEV | linux.MS.NOEXEC, null);
     try mount(io, "/sys", "sysfs", linux.MS.NOSUID | linux.MS.NODEV | linux.MS.NOEXEC, null);
+    if (std.Io.Dir.cwd().access(io, "/sys/firmware/efi", .{})) {
+        try mount(io, "/sys/firmware/efi/efivars", "efivarfs", linux.MS.NOSUID | linux.MS.NODEV | linux.MS.NOEXEC, null);
+    } else |err| if (err != error.FileNotFound) return err;
     // devtmpfs creates existing and subsequently discovered kernel device nodes.
     try mount(io, "/dev", "devtmpfs", linux.MS.NOSUID | linux.MS.NOEXEC, "mode=0755");
     try mount(io, "/dev/pts", "devpts", linux.MS.NOSUID | linux.MS.NOEXEC, "newinstance,ptmxmode=0666,mode=0620");
@@ -27,7 +30,7 @@ pub fn setup(io: std.Io) !void {
 }
 
 fn requireRam(kind: u64) !void {
-    if (kind != fs.tmpfs_magic and kind != fs.ramfs_magic) return error.RootMustBeRam;
+    if (kind != fs.TMPFS_MAGIC and kind != fs.RAMFS_MAGIC) return error.RootMustBeRam;
 }
 
 fn mount(io: std.Io, path: [:0]const u8, kind: [:0]const u8, flags: u32, data: ?[:0]const u8) !void {
@@ -48,8 +51,8 @@ fn link(target: [:0]const u8, path: [:0]const u8) !void {
 }
 
 test "maintenance root accepts only in-memory filesystem types" {
-    try requireRam(fs.tmpfs_magic);
-    try requireRam(fs.ramfs_magic);
+    try requireRam(fs.TMPFS_MAGIC);
+    try requireRam(fs.RAMFS_MAGIC);
     try std.testing.expectError(error.RootMustBeRam, requireRam(0xef53));
     try std.testing.expectError(error.RootMustBeRam, requireRam(0x794c7630));
 }

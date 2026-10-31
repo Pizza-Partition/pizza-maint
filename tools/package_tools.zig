@@ -2,7 +2,7 @@ const std = @import("std");
 const bundle_build = @import("bundle_build");
 const clap = @import("clap");
 
-const params = clap.parseParamsComptime(
+const PARAMS = clap.parseParamsComptime(
     \\-h, --help  Display this help and exit.
     \\--directory <str>  Directory containing pizza, pizza-tools and pizza-init (required).
     \\--output <str>  New release tar.gz outside the source bundle (required).
@@ -18,7 +18,7 @@ pub fn run(
 ) !void {
     var iter: clap.args.SliceIterator = .{ .args = argv };
     var diagnostic: clap.Diagnostic = .{};
-    var parsed = clap.parseEx(clap.Help, &params, clap.parsers.default, &iter, .{
+    var parsed = clap.parseEx(clap.Help, &PARAMS, clap.parsers.default, &iter, .{
         .allocator = allocator,
         .diagnostic = &diagnostic,
     }) catch |err| {
@@ -31,7 +31,7 @@ pub fn run(
             io,
             "Usage: pizza-tools pack-tools [options]\n",
         );
-        return clap.helpToFile(io, .stdout(), clap.Help, &params, .{});
+        return clap.helpToFile(io, .stdout(), clap.Help, &PARAMS, .{});
     }
     const root = parsed.args.directory orelse return error.MissingDirectory;
     const output = parsed.args.output orelse return error.MissingOutput;

@@ -1,22 +1,19 @@
-//! Add Pizza's own program and frontend without unpacking the authenticated base.
+//! Add Pizza's own programs without unpacking the authenticated base.
 const std = @import("std");
-const utils = @import("utils");
 const files = @import("files.zig");
 const release = @import("release.zig");
+const application_contract = @import("application.zig");
 pub const Options = struct {
     runtime: []const u8,
     init: []const u8,
     maintenance: []const u8,
-    panel: []const u8,
     destination: []const u8,
-    patchelf: []const u8,
-    lock: []const u8 = release.lock_path,
+    lock: []const u8 = release.LOCK_PATH,
 };
 
 pub fn assemble(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, options: Options) !void {
     const lock = try release.readLock(a, io, options.lock);
-    const version = try utils.process.checkedOutput(a, io, env, &.{ options.patchelf, "--version" });
-    if (!std.mem.eql(u8, std.mem.trim(u8, version, " \r\n\t"), "patchelf 0.19.2")) return error.UnsupportedPatchelfVersion;
+    try application_contract.verify(a, io, options.maintenance);
     const base = try release.verify(a, io, env, options.runtime, lock);
     const output = try files.Output.init(a, io, options.destination, true);
     defer output.deinit(io);
@@ -29,21 +26,16 @@ pub fn assemble(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map,
     try std.Io.Dir.cwd().createDirPath(io, std.fs.path.dirname(application).?);
     try std.Io.Dir.cwd().copyFile(options.init, .cwd(), try std.fs.path.join(a, &.{ overlay, "init" }), io, .{ .permissions = .fromMode(0o755) });
     try std.Io.Dir.cwd().copyFile(options.maintenance, .cwd(), application, io, .{ .permissions = .fromMode(0o755) });
-    try utils.process.runInherited(io, env, &.{ options.patchelf, "--set-interpreter", "lib/ld-linux-x86-64.so.2", "--set-rpath", "$ORIGIN/../lib", application });
-    const panel = try std.fs.path.join(a, &.{ overlay, "opt/pizza/bundle/share/panel" });
-    try std.Io.Dir.cwd().createDirPath(io, std.fs.path.dirname(panel).?);
-    try utils.process.runInherited(io, env, &.{ "cp", "-aL", "--", options.panel, panel });
-    try std.Io.Dir.cwd().symLink(io, "bundle/share/panel", try std.fs.path.join(a, &.{ overlay, "opt/pizza/panel" }), .{});
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ root, "manifest.json" }), .data = try a.print("{s}\n", .{try std.json.Stringify.valueAlloc(a, .{
         .format = @as(u16, 3),
         .kind = "pizza-application",
         .architecture = "x86_64",
-        .profile = "wpe-platform-v2",
+        .profile = "cpu-maint-v1",
         .working_directory = "bundle-root",
         .layout = "base-plus-overlay",
         .kernel = .{ .version = base.kernel_version, .release = base.kernel_release, .image = "vmlinuz" },
-        .components = .{ .@"pizza-init" = "overlay/init", .@"pizza-maint" = "overlay/opt/pizza/bundle/bin/pizza-maint", .@"panel-assets" = "overlay/opt/pizza/bundle/share/panel/index.html" },
-        .provenance = .{ .repository = release.repository, .tag = lock.tag, .commit = lock.commit, .sha256 = lock.sha256 },
+        .components = .{ .@"pizza-init" = "overlay/init", .@"pizza-maint" = "overlay/opt/pizza/bundle/bin/pizza-maint" },
+        .provenance = .{ .repository = release.REPOSITORY, .tag = lock.tag, .commit = lock.commit, .sha256 = lock.sha256 },
     }, .{ .whitespace = .indent_2 })}) });
     try std.Io.Dir.cwd().renamePreserve(root, .cwd(), output.target, io);
 }

@@ -2,12 +2,12 @@
   "repository": "Pizza-Partition/pizza-bundle",
   "repository_id": "1425566562",
   "workflow": "Pizza-Partition/pizza-bundle/.github/workflows/release.yml",
-  "tag": "v0.3.1",
-  "commit": "11828b51adaa517bb8281f9d0714bb3c5507e139",
+  "tag": "v0.4.1",
+  "commit": "d6729057a02482852274427ecfaa2580161ee448",
   "asset": "pizza-base-x86_64.img",
-  "sha256": "13816d52988709ca213fcb98831216e0b586f38104d743a5d6f9621fec31ac6a",
+  "sha256": "9c3d2f5a75d3ef8bb54ca0085bb38a8b18ff833a56c67f21cd6da37350f42142",
   "kernel_asset": "vmlinuz",
   "kernel_sha256": "7ca8265d776950dd3cdfb8eab7ee33978d139125e09bcf2a3a4ff482b7d5728c",
   "metadata_asset": "base.json",
-  "metadata_sha256": "533b51d4db0bef20884c2b44df631d9d5d798e28ff0afc7c43524d4dcc065fd6"
+  "metadata_sha256": "6011d7d2d02b09ac9e33b19aea59a6768b3efafa399d7ce1ef0f19e42e83a8c6"
 }

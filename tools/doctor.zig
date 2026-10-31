@@ -2,10 +2,9 @@ const std = @import("std");
 const utils = @import("utils");
 const clap = @import("clap");
 
-const params = clap.parseParamsComptime(
+const PARAMS = clap.parseParamsComptime(
     \\-h, --help  Display this help and exit.
-    \\--profile <str>  Dependency profile: build, qemu, image, kiosk or matrix.
-    \\--wpe-api <str>  WPE API: auto, 2.0 or 1.1.
+    \\--profile <str>  Dependency profile: build, qemu, image or matrix.
 );
 
 /// Checks system tools and applicable version requirements for the selected dependency profile.
@@ -18,7 +17,7 @@ pub fn run(
 ) !void {
     var iter: clap.args.SliceIterator = .{ .args = argv };
     var diagnostic: clap.Diagnostic = .{};
-    var parsed = clap.parseEx(clap.Help, &params, clap.parsers.default, &iter, .{
+    var parsed = clap.parseEx(clap.Help, &PARAMS, clap.parsers.default, &iter, .{
         .allocator = allocator,
         .diagnostic = &diagnostic,
     }) catch |err| {
@@ -28,7 +27,7 @@ pub fn run(
     defer parsed.deinit();
     if (parsed.args.help != 0) {
         try std.Io.File.stdout().writeStreamingAll(io, "Usage: pizza-tools doctor [options]\n");
-        return clap.helpToFile(io, .stdout(), clap.Help, &params, .{});
+        return clap.helpToFile(io, .stdout(), clap.Help, &PARAMS, .{});
     }
     const profile = (parsed.args.profile orelse "build");
     const commands: []const []const u8 = if (std.mem.eql(u8, profile, "build")) &.{
@@ -40,8 +39,6 @@ pub fn run(
         "qemu-img",
     } else if (std.mem.eql(u8, profile, "image")) &.{
         "curl",
-    } else if (std.mem.eql(u8, profile, "kiosk")) &.{
-        "pkg-config",
     } else if (std.mem.eql(u8, profile, "matrix")) &.{
         "qemu-system-x86_64",
         "qemu-img",
@@ -116,62 +113,6 @@ pub fn run(
         if (try std.fmt.parseInt(u32, parts.next() orelse "", 10) < 22) {
             return error.IncompatibleNode;
         }
-    }
-    if (std.mem.eql(u8, profile, "kiosk") and !failed) {
-        var api = (parsed.args.@"wpe-api" orelse "auto");
-        if (std.mem.eql(u8, api, "auto")) {
-            const output = try std.process.run(allocator, io, .{
-                .argv = &.{ "pkg-config", "--exists", "wpe-webkit-2.0" },
-                .environ_map = environ,
-                .stdout_limit = .limited(32 * 1024 * 1024),
-                .stderr_limit = .limited(32 * 1024 * 1024),
-            });
-            api = if (output.term == .exited and output.term.exited == 0) "2.0" else "1.1";
-        }
-        const libraries: []const []const u8 = if (std.mem.eql(u8, api, "2.0")) &.{
-            "wpe-webkit-2.0",
-            "wpe-platform-2.0",
-            "wpe-platform-drm-2.0",
-            "wpe-platform-headless-2.0",
-        } else if (std.mem.eql(u8, api, "1.1")) &.{
-            "wpe-webkit-1.1",
-            "wpe-1.0",
-            "wpebackend-fdo-1.0",
-        } else return error.UnknownWpeApi;
-        for (libraries) |library| std.log.info("{s}: {s}", .{
-            library,
-            std.mem.trim(
-                u8,
-                try utils.process.checkedOutput(
-                    allocator,
-                    io,
-                    environ,
-                    &.{ "pkg-config", "--modversion", library },
-                ),
-                " \t\r\n",
-            ),
-        });
-        for ([_][]const u8{
-            "glib-2.0",
-            "gio-2.0",
-            "egl",
-            "gbm",
-            "libdrm",
-            "libinput",
-            "fontconfig",
-        }) |library| std.log.info("{s}: {s}", .{
-            library,
-            std.mem.trim(
-                u8,
-                try utils.process.checkedOutput(
-                    allocator,
-                    io,
-                    environ,
-                    &.{ "pkg-config", "--modversion", library },
-                ),
-                " \t\r\n",
-            ),
-        });
     }
     if (failed)
         return error.MissingSystemDependencies;

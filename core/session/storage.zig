@@ -75,7 +75,7 @@ pub fn select(a: std.mem.Allocator, io: std.Io, device: []const u8, home: []cons
     var root = try std.Io.Dir.cwd().openDir(io, "/", .{});
     defer root.close(io);
     const root_kind = try fs.filesystemType(root);
-    if (root_kind != fs.tmpfs_magic and root_kind != fs.ramfs_magic) {
+    if (root_kind != fs.TMPFS_MAGIC and root_kind != fs.RAMFS_MAGIC) {
         const root_id = try stat(root.handle);
         const original = diskParent(a, io, root_id.dev_major, root_id.dev_minor) catch return error.OriginalRootBackingUnknown;
         if (std.mem.eql(u8, original, disk)) return error.JournalMustUseIndependentDisk;
@@ -158,7 +158,7 @@ pub const Mounted = struct {
 
     pub fn close(self: *Mounted, io: std.Io) void {
         self.directory.close(io);
-        if (linux.errno(linux.umount2(session.mount_path, 0)) != .SUCCESS) std.log.err("Journal unmount failed; do not remove media", .{});
+        if (linux.errno(linux.umount2(session.MOUNT_PATH, 0)) != .SUCCESS) std.log.err("Journal unmount failed; do not remove media", .{});
     }
     pub fn mark(self: *Mounted, a: std.mem.Allocator, io: std.Io, status: session.Status) !void {
         if (self.marker.status == status) return;
@@ -177,7 +177,7 @@ pub fn mount(a: std.mem.Allocator, io: std.Io, request: session.Request) !Mounte
     var root = try std.Io.Dir.cwd().openDir(io, "/", .{});
     defer root.close(io);
     const root_kind = try fs.filesystemType(root);
-    if (root_kind != fs.tmpfs_magic and root_kind != fs.ramfs_magic) return error.MaintenanceMustUseRamRoot;
+    if (root_kind != fs.TMPFS_MAGIC and root_kind != fs.RAMFS_MAGIC) return error.MaintenanceMustUseRamRoot;
     const deadline = std.Io.Timestamp.now(io, .awake).nanoseconds + 10 * std.time.ns_per_s;
     const device = while (true) {
         if (findDevice(a, io, request.home.uuid)) |found| break found else |err| {
@@ -185,11 +185,11 @@ pub fn mount(a: std.mem.Allocator, io: std.Io, request: session.Request) !Mounte
             try std.Io.sleep(io, .fromMilliseconds(100), .awake);
         }
     };
-    try std.Io.Dir.cwd().createDir(io, session.mount_path, .fromMode(0o700));
-    const result = linux.mount(try a.dupeSentinel(u8, device, 0), session.mount_path, "ext4", linux.MS.NOSUID | linux.MS.NODEV | linux.MS.NOEXEC, 0);
+    try std.Io.Dir.cwd().createDir(io, session.MOUNT_PATH, .fromMode(0o700));
+    const result = linux.mount(try a.dupeSentinel(u8, device, 0), session.MOUNT_PATH, "ext4", linux.MS.NOSUID | linux.MS.NODEV | linux.MS.NOEXEC, 0);
     if (linux.errno(result) != .SUCCESS) return error.JournalMountFailed;
-    errdefer _ = linux.umount2(session.mount_path, 0);
-    const path = try std.fs.path.join(a, &.{ session.mount_path, request.home.path });
+    errdefer _ = linux.umount2(session.MOUNT_PATH, 0);
+    const path = try std.fs.path.join(a, &.{ session.MOUNT_PATH, request.home.path });
     var home = try openTrusted(io, path);
     errdefer home.close(io);
     if ((try home.stat(io)).permissions.toMode() & 0o077 != 0) return error.JournalHomeMustBePrivate;

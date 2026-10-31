@@ -1,7 +1,7 @@
 .{
-    .name = .pizza_transition,
-    .version = "0.1.0",
-    .fingerprint = 0xf34c1f157b9ef8cb,
+    .name = .pizza_maint,
+    .version = "0.5.0",
+    .fingerprint = 0x397bd5fc29ca968f,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .clap = .{
@@ -12,6 +12,22 @@
             .url = "git+https://github.com/rockorager/libvaxis#0a1f55da77dcf99d638cf409b0c439e1542996d5",
             .hash = "vaxis-0.6.0-BWNV_K4WDQC9AopHvrPY98uwQwG2kATn91rbbjvTX-XR",
         },
+        .e2fsprogs = .{
+            .url = "https://www.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/v1.47.4/e2fsprogs-1.47.4.tar.xz",
+            .hash = "N-V-__8AADmJOgI2-k-Z_uY49ZwSiVRny3aT9vz0x5CWnmdX",
+        },
+        .fatfs = .{
+            .url = "https://elm-chan.org/fsw/ff/arc/ff16.zip",
+            .hash = "N-V-__8AANeOTQCXsj_JWKkUE315l-xb761T40wOFbd658vu",
+        },
+        .ntfs3g = .{
+            .url = "https://tuxera.com/opensource/ntfs-3g_ntfsprogs-2026.9.28.tgz",
+            .hash = "N-V-__8AAK1WVgB5Cxl51om2cUw-Z4hfEDabVa_-CTLjECzI",
+        },
+        .btrfs = .{
+            .url = "https://codeload.github.com/kdave/btrfs-progs/tar.gz/refs/tags/v7.1",
+            .hash = "N-V-__8AAMkaHgFiSA-j5DQQg7aLpyVHnrF95CtI4oo6Affb",
+        },
     },
     .paths = .{
         "build.zig",
@@ -19,6 +35,7 @@
         "build",
         ".zigversion",
         "core",
+        "protocol",
         "ui",
         "tools",
         "config",
@@ -28,6 +45,5 @@
         ".editorconfig",
         ".prettierrc.json",
         ".prettierignore",
-        ".clang-format",
     },
 }

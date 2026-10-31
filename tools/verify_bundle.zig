@@ -2,8 +2,10 @@ const std = @import("std");
 const clap = @import("clap");
 
 const bundle_build = @import("bundle_build");
-const params = clap.parseParamsComptime(
+const PARAMS = clap.parseParamsComptime(
     \\-h, --help  Display this help and exit.
+    \\--offline  Verify using an unexpired authenticated TUF cache, without network.
+    \\--trust-cache <str>  Sigstore TUF cache directory (default: user cache).
     \\--bundle <str>  Release download directory containing base image, kernel, metadata and attestation (required).
 );
 
@@ -16,7 +18,7 @@ pub fn run(
 ) !void {
     var iter: clap.args.SliceIterator = .{ .args = argv };
     var diagnostic: clap.Diagnostic = .{};
-    var parsed = clap.parseEx(clap.Help, &params, clap.parsers.default, &iter, .{
+    var parsed = clap.parseEx(clap.Help, &PARAMS, clap.parsers.default, &iter, .{
         .allocator = allocator,
         .diagnostic = &diagnostic,
     }) catch |err| {
@@ -29,9 +31,12 @@ pub fn run(
             io,
             "Usage: pizza-tools verify-bundle [options]\n",
         );
-        return clap.helpToFile(io, .stdout(), clap.Help, &params, .{});
+        return clap.helpToFile(io, .stdout(), clap.Help, &PARAMS, .{});
     }
     const runtime = parsed.args.bundle orelse return error.MissingBundle;
-    const lock = try bundle_build.release.readLock(allocator, io, bundle_build.release.lock_path);
-    _ = try bundle_build.release.verify(allocator, io, environ, runtime, lock);
+    const lock = try bundle_build.release.readLock(allocator, io, bundle_build.release.LOCK_PATH);
+    _ = try bundle_build.release.verifyWithTrust(allocator, io, environ, runtime, lock, .{
+        .offline = parsed.args.offline != 0,
+        .cache = parsed.args.@"trust-cache",
+    });
 }

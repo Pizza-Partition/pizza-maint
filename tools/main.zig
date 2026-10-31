@@ -5,22 +5,20 @@ const clap = @import("clap");
 const Command = enum {
     help,
     proto,
-    fmt,
+    report,
     doctor,
     @"fetch-bundle",
-    @"bootstrap-patchelf",
     @"verify-bundle",
     @"prepare-bundle",
     @"pack-bundle",
     @"pack-tools",
     image,
-    @"bootstrap-zig",
     clean,
 };
-const parsers = .{ .command = clap.parsers.enumeration(Command) };
-const params = clap.parseParamsComptime(
+const PARSERS = .{ .command = clap.parsers.enumeration(Command) };
+const PARAMS = clap.parseParamsComptime(
     \\-h, --help  Display this help and exit.
-    \\<command>  proto, fmt, doctor, fetch-bundle, bootstrap-patchelf, verify-bundle, prepare-bundle, pack-bundle, pack-tools, image, bootstrap-zig, clean.
+    \\<command>  proto, doctor, fetch-bundle, verify-bundle, prepare-bundle, pack-bundle, pack-tools, image, clean.
 );
 
 /// Dispatches engineering commands and translates argument or command failures into exit status 1.
@@ -32,7 +30,7 @@ pub fn main(init: std.process.Init) !u8 {
     const checkout_root = try std.process.currentPathAlloc(io, allocator);
     var iter: clap.args.SliceIterator = .{ .args = argv[1..] };
     var diagnostic: clap.Diagnostic = .{};
-    var parsed = clap.parseEx(clap.Help, &params, parsers, &iter, .{
+    var parsed = clap.parseEx(clap.Help, &PARAMS, PARSERS, &iter, .{
         .allocator = allocator,
         .diagnostic = &diagnostic,
         .terminating_positional = 0,
@@ -55,7 +53,7 @@ pub fn main(init: std.process.Init) !u8 {
 
 fn help(io: std.Io) !void {
     try std.Io.File.stdout().writeStreamingAll(io, "Usage: pizza-tools <command> [options]\n");
-    try clap.helpToFile(io, .stdout(), clap.Help, &params, .{});
+    try clap.helpToFile(io, .stdout(), clap.Help, &PARAMS, .{});
     try std.Io.File.stdout().writeStreamingAll(io, "Use zig build tools -- <command> [options].\n");
 }
 
@@ -74,10 +72,13 @@ fn dispatch(
             return help(io);
         },
         .proto => try @import("protocol.zig").generate(allocator, io, environ, argv),
-        .fmt => try @import("format.zig").run(allocator, io, environ, argv),
+        .report => {
+            if (argv.len != 1) return error.ExpectedJournalPath;
+            const scan = try @import("journal").readFile(allocator, io, argv[0]);
+            try std.Io.File.stdout().writeStreamingAll(io, try @import("report").render(allocator, scan));
+        },
         .doctor => try @import("doctor.zig").run(allocator, io, environ, argv),
-        .@"fetch-bundle" => try @import("fetch_bundle.zig").run(allocator, io, environ, false, argv),
-        .@"bootstrap-patchelf" => try @import("fetch_bundle.zig").run(allocator, io, environ, true, argv),
+        .@"fetch-bundle" => try @import("fetch_bundle.zig").run(allocator, io, environ, argv),
         .@"verify-bundle" => try @import("verify_bundle.zig").run(allocator, io, environ, argv),
         .@"prepare-bundle" => try @import(
             "prepare.zig",
@@ -99,15 +100,6 @@ fn dispatch(
         ),
         .@"pack-tools" => try @import("package_tools.zig").run(allocator, io, environ, checkout_root, argv),
         .image => try @import("image.zig").run(allocator, io, environ, checkout_root, argv),
-        .@"bootstrap-zig" => try @import(
-            "bootstrap.zig",
-        ).run(
-            allocator,
-            io,
-            environ,
-            checkout_root,
-            argv,
-        ),
         .clean => try clean(allocator, io, argv),
     }
 }
@@ -130,7 +122,7 @@ fn clean(allocator: std.mem.Allocator, io: std.Io, argv: []const []const u8) !vo
         try std.Io.File.stdout().writeStreamingAll(io, "Usage: pizza-tools clean [options]\n");
         return clap.helpToFile(io, .stdout(), clap.Help, &clean_params, .{});
     }
-    for ([_][]const u8{ ".zig-cache", "zig-out", "ui/execution/gui/dist" }) |path| {
+    for ([_][]const u8{ ".zig-cache", "zig-out" }) |path| {
         std.Io.Dir.cwd().access(io, path, .{}) catch continue;
         try std.Io.Dir.cwd().deleteTree(io, path);
     }

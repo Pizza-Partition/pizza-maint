@@ -1,0 +1,1018 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pizza.local/schema/v4/contract.json",
+  "title": "Pizza shared contract",
+  "x-pizza": {
+    "version": 4,
+    "journal_magic": 1348094513,
+    "journal_header_bytes": 64,
+    "journal_byte_order": "little",
+    "journal_offsets": {
+      "magic": 0,
+      "version": 4,
+      "header_bytes": 6,
+      "seq": 8,
+      "monotonic_ns": 16,
+      "step_id": 24,
+      "phase": 28,
+      "payload_len": 32,
+      "crc32": 36
+    },
+    "journal_phases": {
+      "intent": 1,
+      "commit": 2,
+      "fail": 3,
+      "note": 4,
+      "boundary": 5
+    }
+  },
+  "$defs": {
+    "Phase": {
+      "type": "string",
+      "enum": [
+        "intent",
+        "commit",
+        "fail",
+        "note",
+        "boundary"
+      ]
+    },
+    "Home": {
+      "type": "string",
+      "enum": [
+        "root_path",
+        "scratch_partition",
+        "other_device"
+      ]
+    },
+    "Step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label"
+      ],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295,
+          "x-zig-type": "u32"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "simulated": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "Plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_-]{1,64}$"
+        },
+        "version": {
+          "type": "integer",
+          "const": 4,
+          "x-zig-type": "u16"
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 16384,
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "default": []
+        },
+        "request": {
+          "$ref": "#/$defs/OperationRequest"
+        }
+      }
+    },
+    "Event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "step_id",
+        "phase",
+        "message"
+      ],
+      "properties": {
+        "seq": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,19}$"
+        },
+        "step_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "x-zig-type": "u32"
+        },
+        "phase": {
+          "$ref": "#/$defs/Phase"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      }
+    },
+    "ExecutionStatus": {
+      "type": "string",
+      "enum": [
+        "view_only",
+        "running",
+        "succeeded",
+        "failed",
+        "hung",
+        "degraded",
+        "interrupted"
+      ]
+    },
+    "Execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "step_id",
+        "committed",
+        "total",
+        "message"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/ExecutionStatus"
+        },
+        "step_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "x-zig-type": "u32"
+        },
+        "committed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16384,
+          "x-zig-type": "u32"
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16384,
+          "x-zig-type": "u32"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "completed_bytes": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$",
+          "default": "0"
+        },
+        "total_bytes": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$",
+          "default": "0"
+        }
+      }
+    },
+    "DeviceKind": {
+      "type": "string",
+      "enum": [
+        "image",
+        "physical"
+      ]
+    },
+    "DeviceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "identity",
+        "sector_size",
+        "kind"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sector_size": {
+          "type": "integer",
+          "minimum": 512,
+          "maximum": 65536,
+          "x-zig-type": "u32"
+        },
+        "kind": {
+          "$ref": "#/$defs/DeviceKind"
+        }
+      }
+    },
+    "PartitionChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "partition_id",
+        "offset",
+        "length"
+      ],
+      "properties": {
+        "partition_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "offset": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$"
+        },
+        "length": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        }
+      }
+    },
+    "FilesystemKind": {
+      "type": "string",
+      "enum": [
+        "ext2",
+        "ext3",
+        "ext4",
+        "xfs",
+        "btrfs",
+        "vfat",
+        "exfat",
+        "ntfs",
+        "f2fs",
+        "nilfs2",
+        "udf"
+      ]
+    },
+    "OperationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "target"
+      ],
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "create",
+            "repair",
+            "grow",
+            "shrink",
+            "copy",
+            "layout",
+            "recover"
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/DeviceRef"
+        },
+        "source": {
+          "$ref": "#/$defs/DeviceRef"
+        },
+        "filesystem": {
+          "$ref": "#/$defs/FilesystemKind"
+        },
+        "partition_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "target_bytes": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        },
+        "partitions": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PartitionChange"
+          },
+          "maxItems": 4096
+        }
+      }
+    },
+    "Diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "severity",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "partition_id": {
+          "type": "string"
+        }
+      }
+    },
+    "IntentKind": {
+      "type": "string",
+      "enum": [
+        "resize",
+        "move",
+        "create",
+        "delete",
+        "format",
+        "label",
+        "barrier",
+        "copy"
+      ]
+    },
+    "HostCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "support",
+        "reason"
+      ],
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/IntentKind"
+        },
+        "support": {
+          "type": "string",
+          "enum": [
+            "available",
+            "offline_check",
+            "unavailable"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "backend": {
+          "type": "string",
+          "enum": [
+            "host",
+            "maintenance"
+          ],
+          "default": "maintenance"
+        },
+        "grow": {
+          "type": "boolean",
+          "default": false
+        },
+        "shrink": {
+          "type": "boolean",
+          "default": false
+        },
+        "required_utility": {
+          "type": "string"
+        },
+        "minimum_bytes": {
+          "type": "string"
+        }
+      }
+    },
+    "HostPartition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "offset",
+        "length",
+        "name",
+        "encryption"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "length": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "name": {
+          "type": "string"
+        },
+        "filesystem": {
+          "$ref": "#/$defs/FilesystemKind"
+        },
+        "used_bytes": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "free_bytes": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "mountpoints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "maxItems": 16384
+        },
+        "encryption": {
+          "type": "string",
+          "enum": [
+            "none",
+            "encrypted",
+            "unknown"
+          ]
+        },
+        "protected": {
+          "type": "boolean",
+          "default": false
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HostCapability"
+          },
+          "default": [],
+          "maxItems": 16384
+        },
+        "slot": {
+          "type": "integer",
+          "x-zig-type": "u32"
+        },
+        "type_guid": {
+          "type": "string"
+        },
+        "partition_uuid": {
+          "type": "string"
+        },
+        "attributes": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "HostDisk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "capacity",
+        "sector_size",
+        "model",
+        "read_only"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "capacity": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "sector_size": {
+          "type": "integer",
+          "x-zig-type": "u32"
+        },
+        "physical_block_size": {
+          "type": "integer",
+          "x-zig-type": "u32"
+        },
+        "model": {
+          "type": "string"
+        },
+        "read_only": {
+          "type": "boolean"
+        },
+        "partition_table": {
+          "type": "string"
+        },
+        "usable_offset": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "usable_length": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "partitions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HostPartition"
+          },
+          "default": [],
+          "maxItems": 16384
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Diagnostic"
+          },
+          "default": [],
+          "maxItems": 16384
+        }
+      }
+    },
+    "InventorySnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "snapshot_id",
+        "platform"
+      ],
+      "properties": {
+        "version": {
+          "type": "integer",
+          "const": 4,
+          "x-zig-type": "u16"
+        },
+        "snapshot_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "linux",
+            "windows"
+          ]
+        },
+        "disks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HostDisk"
+          },
+          "default": [],
+          "maxItems": 16384
+        },
+        "esp_path": {
+          "type": "string"
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Diagnostic"
+          },
+          "default": [],
+          "maxItems": 16384
+        }
+      }
+    },
+    "PlanIntent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "partition_id"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/IntentKind"
+        },
+        "partition_id": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "length": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "filesystem": {
+          "$ref": "#/$defs/FilesystemKind"
+        },
+        "label": {
+          "type": "string"
+        },
+        "source_id": {
+          "type": "string"
+        }
+      }
+    },
+    "DesiredPartition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "offset",
+        "length",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "length": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "name": {
+          "type": "string"
+        },
+        "filesystem": {
+          "$ref": "#/$defs/FilesystemKind"
+        },
+        "retain_data": {
+          "type": "boolean",
+          "default": true
+        },
+        "slot": {
+          "type": "integer",
+          "x-zig-type": "u32"
+        },
+        "type_guid": {
+          "type": "string"
+        },
+        "partition_uuid": {
+          "type": "string"
+        },
+        "attributes": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "default": "0"
+        }
+      }
+    },
+    "PlanDraft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "snapshot_id",
+        "disk_identity"
+      ],
+      "properties": {
+        "version": {
+          "type": "integer",
+          "const": 4,
+          "x-zig-type": "u16"
+        },
+        "snapshot_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "disk_identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "intents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlanIntent"
+          },
+          "default": [],
+          "maxItems": 16384
+        },
+        "layout": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DesiredPartition"
+          },
+          "default": [],
+          "maxItems": 16384
+        }
+      }
+    },
+    "ValidatedPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "digest",
+        "executable",
+        "offline_validation_required",
+        "draft"
+      ],
+      "properties": {
+        "version": {
+          "type": "integer",
+          "const": 4,
+          "x-zig-type": "u16"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "executable": {
+          "type": "boolean"
+        },
+        "offline_validation_required": {
+          "type": "boolean"
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Diagnostic"
+          },
+          "default": [],
+          "maxItems": 16384
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlanIntent"
+          },
+          "default": [],
+          "maxItems": 16384
+        },
+        "destructive_partitions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "maxItems": 16384
+        },
+        "recovery_bytes": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "transfer_bytes": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "draft": {
+          "$ref": "#/$defs/PlanDraft"
+        },
+        "host_operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlanIntent"
+          },
+          "default": []
+        },
+        "maintenance_operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlanIntent"
+          },
+          "default": []
+        },
+        "rollback_scope": {
+          "type": "string",
+          "enum": [
+            "none",
+            "maintenance_only"
+          ],
+          "default": "none"
+        }
+      }
+    },
+    "SessionPhase": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "prepared",
+        "armed",
+        "bootstrapping",
+        "applying",
+        "verified",
+        "undoing",
+        "accepted",
+        "cleaning",
+        "completed",
+        "rolled_back",
+        "failed"
+      ]
+    },
+    "MaintenanceSession": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "id",
+        "plan_digest",
+        "phase",
+        "message"
+      ],
+      "properties": {
+        "version": {
+          "type": "integer",
+          "const": 4,
+          "x-zig-type": "u16"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "plan_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "phase": {
+          "$ref": "#/$defs/SessionPhase"
+        },
+        "message": {
+          "type": "string"
+        },
+        "recovery_bytes": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "report_path": {
+          "type": "string"
+        }
+      }
+    },
+    "ExecutionSession": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": "integer",
+          "const": 4,
+          "x-zig-type": "u16"
+        },
+        "id": {
+          "type": "string"
+        },
+        "plan_digest": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "prepared",
+            "running",
+            "succeeded",
+            "partial",
+            "failed",
+            "interrupted",
+            "needs_recheck",
+            "awaiting_reboot",
+            "maintenance",
+            "cancelled"
+          ]
+        },
+        "completed": {
+          "type": "integer",
+          "minimum": 0,
+          "x-zig-type": "u32"
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "x-zig-type": "u32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "actual": {
+          "$ref": "#/$defs/InventorySnapshot"
+        },
+        "rollback_scope": {
+          "type": "string",
+          "enum": [
+            "none",
+            "maintenance_only"
+          ],
+          "default": "none"
+        },
+        "cancel_requested": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "version",
+        "id",
+        "plan_digest",
+        "status",
+        "completed",
+        "total",
+        "message"
+      ]
+    },
+    "PrivilegedRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": "integer",
+          "const": 4,
+          "x-zig-type": "u16"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "inventory",
+            "validate",
+            "execute",
+            "status",
+            "cancel",
+            "prepare",
+            "reboot",
+            "complete"
+          ]
+        },
+        "draft": {
+          "$ref": "#/$defs/PlanDraft"
+        },
+        "approved_digest": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "elevated": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "version",
+        "action"
+      ]
+    },
+    "CompletionReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": "integer",
+          "const": 4,
+          "x-zig-type": "u16"
+        },
+        "id": {
+          "type": "string"
+        },
+        "plan_digest": {
+          "type": "string"
+        },
+        "program_digest": {
+          "type": "string"
+        },
+        "disk_identity": {
+          "type": "string"
+        },
+        "image_digest": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "rolled_back",
+            "setup_failed"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "id",
+        "plan_digest",
+        "program_digest",
+        "disk_identity",
+        "image_digest",
+        "outcome",
+        "message"
+      ]
+    }
+  }
+}
