@@ -12,3 +12,6 @@ dist/
 build/bundle/trust/root.json
 test/fixtures/sigstore/trusted_root.json
 test/fixtures/sigstore/tuf/
+
+# Generated protocol bindings are checked by check-proto.
+protocol/generated/

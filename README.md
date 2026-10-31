@@ -49,15 +49,15 @@ Python。维护会话验收生成临时普通镜像，再在独立进程中调�
 
 核心路径：
 
-| 路径 | 内容 |
-| --- | --- |
-| core/init | 静态 PID1、挂载、驱动加载与进程监护 |
-| core/maint | 维护状态、journal、storage 及执行后端 |
-| core/maintenance_session | 离线查询与编译、ESP 恢复锚点、分阶段会话及引导绑定 |
-| ui/execution | 维护终端界面 |
-| protocol | 独立协议包 |
-| build/bundle、core/initramfs | 验证固定基础产物、组装应用层和 initramfs |
-| test | Zig 回归、普通镜像测试与 QEMU 夹具 |
+| 路径                         | 内容                                               |
+| ---------------------------- | -------------------------------------------------- |
+| core/init                    | 静态 PID1、挂载、驱动加载与进程监护                |
+| core/maint                   | 维护状态、journal、storage 及执行后端              |
+| core/maintenance_session     | 离线查询与编译、ESP 恢复锚点、分阶段会话及引导绑定 |
+| ui/execution                 | 维护终端界面                                       |
+| protocol                     | 独立协议包                                         |
+| build/bundle、core/initramfs | 验证固定基础产物、组装应用层和 initramfs           |
+| test                         | Zig 回归、普通镜像测试与 QEMU 夹具                 |
 
 已删除旧内核切换实现；所有接管必须完整重启。当前拆仓后的普通镜像会话验收可用，
 但 ISO/UKI 发布、桌面 ESP 准备、PID1 接管 v4 会话、完整重启、报告返回的产品闭环
