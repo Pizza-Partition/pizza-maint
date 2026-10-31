@@ -8,6 +8,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-26.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -38,13 +39,16 @@ jobs:
           JS
       - name: Install build and bundle tools
         run: sudo apt-get update && sudo apt-get install -y binutils libarchive-tools e2fsprogs dosfstools mtools ntfs-3g btrfs-progs
-      - name: Build, validate and test
-        run: |
-          zig build deps
-          zig build fmt-check
-          zig build check check-proto test-session test-maint-session-image test-maint-executor
-          zig build test-storage-unit test-filesystems test-storage-crash
-          zig build protocol-package
+      - name: Install locked developer dependencies
+        run: zig build deps
+      - name: Check source formatting
+        run: zig build fmt-check
+      - name: Test protocol and maintenance sessions
+        run: zig build check check-proto test-session test-maint-session-image test-maint-executor -Doptimize=safe -j4 --summary all
+      - name: Test storage, filesystems and crash recovery
+        run: zig build test-storage-unit test-filesystems test-storage-crash -Doptimize=safe -j4 --summary all
+      - name: Export matching protocol
+        run: zig build protocol-package -Doptimize=safe -j4 --summary all
       - name: Build static release artifacts
         run: zig build -Doptimize=safe
       - name: Assert static PID 1 binary
