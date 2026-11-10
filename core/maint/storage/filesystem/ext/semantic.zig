@@ -396,7 +396,10 @@ fn encode(ctx: *anyopaque, intent: semantic.Intent, desired: semantic.Geometry, 
     const session = try Session.openStaged(state.a, state.io, &builder);
     defer session.close();
     const fs = session.fs;
-    try session.check(c_api.ext2fs_read_bitmaps(fs));
+    // state.load() has already validated the original bitmaps. Relocations can
+    // reuse a retired bitmap's old address, so that address in the staged view
+    // must not be checked against the original descriptor checksum. Build the
+    // target allocation maps directly from the admitted placements below.
     const previous_groups = fs.*.group_desc_count;
     const old_desc_blocks = fs.*.desc_blocks;
     if (g.desc_blocks > old_desc_blocks) fs.*.super.*.s_reserved_gdt_blocks -= @intCast(g.desc_blocks - old_desc_blocks);
