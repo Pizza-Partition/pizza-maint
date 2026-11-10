@@ -48,7 +48,7 @@ pub fn readUuid(a: std.mem.Allocator, io: std.Io, path: []const u8) ![]const u8 
 fn uuidFromSuperblock(a: std.mem.Allocator, block: *const [1024]u8) ![]const u8 {
     // ext4 superblock offsets: UUID 0x68, external journal UUID 0xd0,
     // internal journal inode 0xe0, external journal device 0xe4.
-    if (std.mem.readInt(u16, block[56..58], .little) != 0xef53 or std.mem.readInt(u32, block[96..100], .little) & 0x40 == 0 or std.mem.readInt(u32, block[228..232], .little) != 0 or !std.mem.allEqual(u8, block[208..224], 0)) return error.UnsupportedJournalFilesystem;
+    if (std.mem.readInt(u16, block[56..58], .little) != fs.EXT4_SUPER_MAGIC or std.mem.readInt(u32, block[96..100], .little) & 0x40 == 0 or std.mem.readInt(u32, block[228..232], .little) != 0 or !std.mem.allEqual(u8, block[208..224], 0)) return error.UnsupportedJournalFilesystem;
     const uuid: [16]u8 = block[104..120].*;
     if (std.mem.allEqual(u8, &uuid, 0)) return error.InvalidJournalIdentity;
     return a.dupe(u8, &std.fmt.bytesToHex(uuid, .lower));
@@ -83,7 +83,7 @@ pub fn select(a: std.mem.Allocator, io: std.Io, device: []const u8, home: []cons
     var directory = try openTrusted(io, home);
     defer directory.close(io);
     const actual = try stat(directory.handle);
-    if (actual.dev_major != identity.rdev_major or actual.dev_minor != identity.rdev_minor or try fs.filesystemType(directory) != 0xef53) return error.JournalDeviceHomeMismatch;
+    if (actual.dev_major != identity.rdev_major or actual.dev_minor != identity.rdev_minor or try fs.filesystemType(directory) != fs.EXT4_SUPER_MAGIC) return error.JournalDeviceHomeMismatch;
     if ((try directory.stat(io)).permissions.toMode() & 0o077 != 0) return error.JournalHomeMustBePrivate;
     if (directory.access(io, "journal.bin", .{})) return error.JournalAlreadyExists else |err| if (err != error.FileNotFound) return err;
     const relative = try relativeHome(a, try session.readProc(a, io, "/proc/self/mountinfo", 1024 * 1024), home, identity.rdev_major, identity.rdev_minor);
@@ -143,7 +143,10 @@ pub fn findDevice(a: std.mem.Allocator, io: std.Io, uuid: []const u8) ![]const u
     var selected: ?[]const u8 = null;
     while (try iterator.next(io)) |entry| {
         const path = try a.print("/dev/{s}", .{entry.name});
-        const actual = readUuid(a, io, path) catch continue;
+        const actual = readUuid(a, io, path) catch |err| switch (err) {
+            error.UnsupportedJournalFilesystem, error.JournalMustBeBlockDevice => continue,
+            else => return err,
+        };
         if (!std.mem.eql(u8, actual, uuid)) continue;
         if (selected != null) return error.DuplicateJournalUuid;
         selected = path;
@@ -193,7 +196,7 @@ pub fn mount(a: std.mem.Allocator, io: std.Io, request: session.Request) !Mounte
     var home = try openTrusted(io, path);
     errdefer home.close(io);
     if ((try home.stat(io)).permissions.toMode() & 0o077 != 0) return error.JournalHomeMustBePrivate;
-    if (try fs.filesystemType(home) != 0xef53) return error.JournalHomeMustBePersistent;
+    if (try fs.filesystemType(home) != fs.EXT4_SUPER_MAGIC) return error.JournalHomeMustBePersistent;
     const marker = try session.readMarker(a, io, home);
     const expected = try std.json.Stringify.valueAlloc(a, request, .{});
     if (marker.status != .loaded or !std.mem.eql(u8, expected, try std.json.Stringify.valueAlloc(a, marker.request, .{}))) return error.StaleOrMismatchedTransition;
@@ -223,7 +226,7 @@ test "internal ext4 journal is accepted, external journal backing is refused" {
     defer arena.deinit();
     const a = arena.allocator();
     var block: [1024]u8 = @splat(0);
-    std.mem.writeInt(u16, block[56..58], 0xef53, .little);
+    std.mem.writeInt(u16, block[56..58], fs.EXT4_SUPER_MAGIC, .little);
     std.mem.writeInt(u32, block[96..100], 0x40, .little);
     std.mem.writeInt(u32, block[224..228], 8, .little);
     @memset(block[104..120], 0x12);

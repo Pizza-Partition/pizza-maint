@@ -61,11 +61,11 @@ fn makeRepairable(_: std.mem.Allocator, io: std.Io, image: *Image) !void {
     try image.file.writePositionalAll(io, &.{0}, g.bytes - g.sector + 510);
 }
 
-extern "c" fn ntfs_pathname_to_inode([*c]ntfs.c.ntfs_volume, [*c]ntfs.c.ntfs_inode, [*c]const u8) [*c]ntfs.c.ntfs_inode;
-extern "c" fn ntfs_bitmap_set_run([*c]ntfs.c.ntfs_attr, i64, i64) c_int;
-extern "c" fn ntfs_bitmap_clear_run([*c]ntfs.c.ntfs_attr, i64, i64) c_int;
+extern "c" fn ntfs_pathname_to_inode([*c]ntfs.c_api.ntfs_volume, [*c]ntfs.c_api.ntfs_inode, [*c]const u8) [*c]ntfs.c_api.ntfs_inode;
+extern "c" fn ntfs_bitmap_set_run([*c]ntfs.c_api.ntfs_attr, i64, i64) c_int;
+extern "c" fn ntfs_bitmap_clear_run([*c]ntfs.c_api.ntfs_attr, i64, i64) c_int;
 fn moveToTail(a: std.mem.Allocator, io: std.Io, path: []const u8) !void {
-    const c = ntfs.c;
+    const c_api = ntfs.c_api;
     var image = try Image.open(io, path, @import("../../fixture.zig").IDENTITY, 512);
     defer image.close(io);
     var overlay = @import("../../../mutation.zig").Builder.init(a, image.reader());
@@ -76,19 +76,19 @@ fn moveToTail(a: std.mem.Allocator, io: std.Io, path: []const u8) !void {
         const v = session.volume.?;
         const ni = ntfs_pathname_to_inode(v, null, "/payload");
         if (ni == null) return error.InvalidTailFixture;
-        const na = c.ntfs_attr_open(ni, c.AT_DATA, null, 0);
+        const na = c_api.ntfs_attr_open(ni, c_api.AT_DATA, null, 0);
         if (na == null) return error.InvalidTailFixture;
-        if (na.*.state & (@as(c_ulong, 1) << c.NA_NonResident) == 0) try session.check(c.ntfs_attr_force_non_resident(na));
-        try session.check(c.ntfs_attr_map_whole_runlist(na));
+        if (na.*.state & (@as(c_ulong, 1) << c_api.NA_NonResident) == 0) try session.check(c_api.ntfs_attr_force_non_resident(na));
+        try session.check(c_api.ntfs_attr_map_whole_runlist(na));
         const count = @divExact(na.*.allocated_size, v.cluster_size);
         const bitmap = try a.alloc(u8, @intCast(@divFloor(v.nr_clusters + 7, 8)));
-        if (c.ntfs_attr_pread(v.lcnbmp_na, 0, @intCast(bitmap.len), bitmap.ptr) != bitmap.len) return error.InvalidTailFixture;
+        if (c_api.ntfs_attr_pread(v.lcnbmp_na, 0, @intCast(bitmap.len), bitmap.ptr) != bitmap.len) return error.InvalidTailFixture;
         const tail = @divFloor(v.nr_clusters * 3, 4);
         if (tail + count > v.nr_clusters) return error.InvalidTailFixture;
         for (@as(usize, @intCast(tail))..@as(usize, @intCast(tail + count))) |cluster| if (bitmap[cluster / 8] & (@as(u8, 1) << @intCast(cluster % 8)) != 0) return error.InvalidTailFixture;
         var items: usize = 0;
         while (na.*.rl[items].length != 0) : (items += 1) {}
-        const old = try a.dupe(c.runlist_element, na.*.rl[0..items]);
+        const old = try a.dupe(c_api.runlist_element, na.*.rl[0..items]);
         const buffer = try a.alloc(u8, v.cluster_size);
         var logical: i64 = 0;
         for (old) |run| {
@@ -109,9 +109,9 @@ fn moveToTail(a: std.mem.Allocator, io: std.Io, path: []const u8) !void {
         };
         na.*.rl[0] = .{ .vcn = 0, .lcn = tail, .length = count };
         na.*.rl[1] = .{ .vcn = count, .lcn = -3, .length = 0 };
-        try session.check(c.ntfs_attr_update_mapping_pairs(na, 0));
-        c.ntfs_attr_close(na);
-        try session.check(c.ntfs_inode_close(ni));
+        try session.check(c_api.ntfs_attr_update_mapping_pairs(na, 0));
+        c_api.ntfs_attr_close(na);
+        try session.check(c_api.ntfs_inode_close(ni));
         try session.finish();
     }
     const changes = try overlay.finish(io, false);

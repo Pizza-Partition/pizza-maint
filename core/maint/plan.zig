@@ -75,8 +75,8 @@ const Work = struct {
             self.error_value = err;
             if (self.recovery_admitted) if (self.target) |*target| {
                 self.phase.store(2, .release);
-                const result = storage.program_executor.recover(self.a(), self.io, target.backend(), self.files.store(), null) catch |restore_error| {
-                    self.error_value = restore_error;
+                const result = storage.program_executor.recover(std.heap.page_allocator, self.io, target.backend(), self.files.store(), null) catch |restore_error| {
+                    std.log.err("Rollback failed after {t}: {t}", .{ err, restore_error });
                     self.status.store(@backingInt(proto.wire.ExecutionStatus.degraded), .release);
                     return;
                 };

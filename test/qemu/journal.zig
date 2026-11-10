@@ -4,7 +4,7 @@ const utils = @import("utils");
 const initramfs = @import("initramfs");
 const journal = @import("journal");
 const clap = @import("clap");
-const h = @import("harness.zig");
+const harness = @import("harness.zig");
 const PARAMS = clap.parseParamsComptime(
     \\-h, --help  Display this help and exit.
     \\--binary <str>  Static journal fixture PID 1 (supplied by zig build test-journal).
@@ -33,7 +33,7 @@ pub fn run(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, chec
     const image = try std.fs.path.join(a, &.{ output, "journal-init.cpio.gz" });
     try initramfs.staticInit(a, io, binary, image);
     const disk = try std.fs.path.join(a, &.{ output, "journal.raw" });
-    try h.noComma(disk);
+    try harness.noComma(disk);
     {
         const file = try std.Io.Dir.cwd().createFile(io, disk, .{ .exclusive = true });
         defer file.close(io);
@@ -43,10 +43,10 @@ pub fn run(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, chec
     inline for (.{ "write", "read" }) |mode| {
         const directory = try std.fs.path.join(a, &.{ output, mode });
         try std.Io.Dir.cwd().createDirPath(io, directory);
-        var command = try h.baseCommand(a, io, env, directory, 1024);
+        var command = try harness.baseCommand(a, io, env, directory, 1024);
         try command.appendSlice(&.{ "-nic", "none", "-kernel", kernel, "-initrd", image, "-append", try a.print("console=ttyS0 loglevel=4 panic=1 rdinit=/init pizza.journal_test={s}", .{mode}), "-drive", try a.print("if=virtio,format=raw,file={s}", .{disk}), "-no-reboot" });
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ directory, "command.json" }), .data = try std.json.Stringify.valueAlloc(a, command.items, .{ .whitespace = .indent_2 }) });
-        const serial = try h.runVm(a, io, env, command.items, directory, parsed.args.timeout orelse 90);
+        const serial = try harness.runVm(a, io, env, command.items, directory, parsed.args.timeout orelse 90);
         const marker = if (comptime std.mem.eql(u8, mode, "write")) "PIZZA_JOURNAL_WRITE_READY" else "PIZZA_JOURNAL_RECOVERY_READY";
         if (!has(serial, marker) or !has(serial, "PIZZA_JOURNAL_UNMOUNTED") or !has(serial, "Power down") or has(serial, "PIZZA_JOURNAL_TEST_FAILED") or has(serial, "Kernel panic")) return error.JournalBootFailed;
     }

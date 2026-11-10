@@ -373,3 +373,30 @@ test "explicit deferred undo is restartable at every durability cut" {
         try std.testing.expectEqualSlices(u8, &BASELINE, m.live);
     }
 }
+
+test "512e writes retain neighboring logical sectors in the physical before-image" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var m = try Machine.init(a, TARGET, &BASELINE);
+    var disk = m.disk();
+    disk.write_granule = 4096;
+    var builder = storage.program.Builder.init(a, disk.reader());
+    const bytes: [512]u8 = @splat(0x91);
+    try builder.write(IO, .{ .offset = 512, .length = 512 }, &bytes, true);
+    const p = try builder.finish();
+    try std.testing.expectEqual(0, p.targetRange(0).?.offset);
+    try std.testing.expectEqual(4096, p.targetRange(0).?.length);
+    const Stop = struct {
+        fn event(_: *anyopaque, _: usize, _: usize, _: u64) !void {
+            return error.InjectedPhysicalWriteFailure;
+        }
+    };
+    try std.testing.expectError(error.InjectedPhysicalWriteFailure, storage.program_executor.executeDeferred(a, IO, disk, m.store(), p, &.{}, null, .{ .context = &m, .event = Stop.event }));
+    try std.testing.expectEqualSlices(u8, BASELINE[0..512], m.live[0..512]);
+    try std.testing.expectEqualSlices(u8, BASELINE[1024..4096], m.live[1024..4096]);
+    // Simulate collateral damage within the same physical sector before undo.
+    @memset(m.live[0..512], 0x77);
+    _ = try storage.program_executor.recover(a, IO, disk, m.store(), null);
+    try std.testing.expectEqualSlices(u8, &BASELINE, m.live);
+}

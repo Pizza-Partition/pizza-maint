@@ -1,59 +1,59 @@
 //! Compile bootstrap -> user -> cleanup before any physical write. Intermediate
 //! layouts reserve the tail; the cleanup layout is exactly the approved layout.
 const std = @import("std");
-const s = @import("storage");
+const storage = @import("storage");
 const proto = @import("proto");
-const w = proto.wire;
+const wire = proto.wire;
 pub const Resources = struct {
-    session: s.model.Digest,
+    session: storage.model.Digest,
     maintenance_uuid: [16]u8,
-    tail: s.model.Range,
-    esp: s.model.Range,
-    control: s.model.Range,
-    bootstrap_store: s.recovery_store.CapsuleDescriptor,
-    cleanup_store: s.recovery_store.CapsuleDescriptor,
+    tail: storage.model.Range,
+    esp: storage.model.Range,
+    control: storage.model.Range,
+    bootstrap_store: storage.recovery_store.CapsuleDescriptor,
+    cleanup_store: storage.recovery_store.CapsuleDescriptor,
 };
 pub const Compiled = struct {
-    bundle: s.maintenance_session.Bundle,
-    bootstrap: s.service.Plan,
-    apply: s.service.Plan,
-    cleanup: s.service.Plan,
+    bundle: storage.maintenance_session.Bundle,
+    bootstrap: storage.service.Plan,
+    apply: storage.service.Plan,
+    cleanup: storage.service.Plan,
     allocator: std.mem.Allocator,
-    pub fn verifier(self: *const Compiled, phase: enum { bootstrap, apply, cleanup }) s.program_executor.Verifier {
+    pub fn verifier(self: *const Compiled, phase: enum { bootstrap, apply, cleanup }) storage.program_executor.Verifier {
         return .{ .context = self, .check = switch (phase) {
             .bootstrap => verifyBootstrap,
             .apply => verifyApply,
             .cleanup => verifyCleanup,
         } };
     }
-    fn verifyBootstrap(ctx: *const anyopaque, io: std.Io, reader: s.device.Reader) !bool {
+    fn verifyBootstrap(ctx: *const anyopaque, io: std.Io, reader: storage.device.Reader) !bool {
         const self: *const Compiled = @ptrCast(@alignCast(ctx));
         return self.bootstrap.verify(self.allocator, io, reader);
     }
-    fn verifyApply(ctx: *const anyopaque, io: std.Io, reader: s.device.Reader) !bool {
+    fn verifyApply(ctx: *const anyopaque, io: std.Io, reader: storage.device.Reader) !bool {
         const self: *const Compiled = @ptrCast(@alignCast(ctx));
         return self.apply.verify(self.allocator, io, reader);
     }
-    fn verifyCleanup(ctx: *const anyopaque, io: std.Io, reader: s.device.Reader) !bool {
+    fn verifyCleanup(ctx: *const anyopaque, io: std.Io, reader: storage.device.Reader) !bool {
         const self: *const Compiled = @ptrCast(@alignCast(ctx));
         return self.cleanup.verify(self.allocator, io, reader);
     }
 };
-fn contains(outer: s.model.Range, inner: s.model.Range) !bool {
+fn contains(outer: storage.model.Range, inner: storage.model.Range) !bool {
     return outer.offset <= inner.offset and try outer.end() >= try inner.end();
 }
-pub fn tailRange(usable: s.model.Range, bytes: u64, block: u32) !s.model.Range {
-    try s.recovery_store.validateBlockSize(block);
+pub fn tailRange(usable: storage.model.Range, bytes: u64, block: u32) !storage.model.Range {
+    try storage.recovery_store.validateBlockSize(block);
     if (bytes == 0) return error.InvalidMaintenanceAreaSize;
     const end = try usable.end() / block * block;
     const length = try std.math.add(u64, bytes, block - 1) / block * block;
     if (length > end or end - length < usable.offset) return error.InsufficientMaintenanceArea;
     return .{ .offset = end - length, .length = length };
 }
-pub fn compile(a: std.mem.Allocator, io: std.Io, reader: s.device.Reader, inventory: w.InventorySnapshot, draft: w.PlanDraft, resources: Resources) !Compiled {
+pub fn compile(a: std.mem.Allocator, io: std.Io, reader: storage.device.Reader, inventory: wire.InventorySnapshot, draft: wire.PlanDraft, resources: Resources) !Compiled {
     const final = try @import("compiler.zig").compileOffline(a, io, reader, inventory, draft);
     const target = reader.target;
-    const original = try s.partition_table.BUILTIN.readLayout(a, io, reader);
+    const original = try storage.partition_table.BUILTIN.readLayout(a, io, reader);
     const block = resources.bootstrap_store.block_size;
     try resources.tail.validate(target.capacity, block);
     try resources.esp.validate(target.capacity, target.sector_size);
@@ -62,7 +62,7 @@ pub fn compile(a: std.mem.Allocator, io: std.Io, reader: s.device.Reader, invent
     if (try resources.tail.end() != try original.usable.end() / block * block) return error.MaintenanceAreaMustEndAtUsableTail;
     if (resources.tail.overlaps(resources.esp)) return error.MaintenanceAreaOverlapsEsp;
     if (!try contains(resources.esp, resources.control)) return error.RecoveryAnchorOutsideEsp;
-    for ([_]s.recovery_store.CapsuleDescriptor{ resources.bootstrap_store, resources.cleanup_store }) |desc| {
+    for ([_]storage.recovery_store.CapsuleDescriptor{ resources.bootstrap_store, resources.cleanup_store }) |desc| {
         for (desc.extents) |range| if (!try contains(resources.esp, range)) return error.RecoveryAnchorOutsideEsp;
     }
     // The ESP itself must retain its identity, geometry, GPT type and flags.
@@ -80,8 +80,8 @@ pub fn compile(a: std.mem.Allocator, io: std.Io, reader: s.device.Reader, invent
         for (final.layout.?) |e| if (e.slot == i) continue :outer;
         break @intCast(i);
     } else return error.NoMaintenanceGptSlot;
-    const maintenance: s.partition_table.Entry = .{
-        .id = s.partition_table.stableId(target, &resources.maintenance_uuid),
+    const maintenance: storage.partition_table.Entry = .{
+        .id = storage.partition_table.stableId(target, &resources.maintenance_uuid),
         .uuid = resources.maintenance_uuid,
         .type_id = .{ 0xaf, 0x3d, 0xc6, 0x0f, 0x83, 0x84, 0x72, 0x47, 0x8e, 0x79, 0x3d, 0x69, 0xd8, 0x47, 0x7d, 0xe4 },
         .slot = slot,
@@ -98,24 +98,24 @@ pub fn compile(a: std.mem.Allocator, io: std.Io, reader: s.device.Reader, invent
             if ((entry.range.offset != try proto.byteCount(part.offset) or entry.range.length != try proto.byteCount(part.length)) and (part.protected or part.encryption != .none)) return error.ProtectedMaintenanceBootstrap;
         };
     };
-    var bootstrap = try s.service.layoutWithFormats(a, io, reader, boot_layout, &.{.{ .partition_id = maintenance.id, .driver = null }});
+    var bootstrap = try storage.service.layoutWithFormats(a, io, reader, boot_layout, &.{.{ .partition_id = maintenance.id, .driver = null }});
     bootstrap.program = try prepareTail(a, io, reader, original.entries, resources.tail, block, bootstrap.program);
-    var boot_preview = try s.program.Preview.init(reader, bootstrap.program);
+    var boot_preview = try storage.program.Preview.init(reader, bootstrap.program);
     const apply_layout = try intermediate(a, final.layout.?, maintenance);
-    var formats: std.ArrayList(s.service.Format) = .empty;
+    var formats: std.ArrayList(storage.service.Format) = .empty;
     for (draft.layout) |p| if (!p.retain_data) {
         const fs = p.filesystem orelse return error.MissingFilesystemSelection;
-        try formats.append(a, .{ .partition_id = try proto.hexDigest(p.id), .driver = try s.filesystem.BUILTIN.get(@fromBackingInt(@intCast(@backingInt(fs)))), .label = if (fs == .ntfs) p.name else "" });
+        try formats.append(a, .{ .partition_id = try proto.hexDigest(p.id), .driver = try storage.filesystem.BUILTIN.get(@fromBackingInt(@intCast(@backingInt(fs)))), .label = if (fs == .ntfs) p.name else "" });
     };
-    var apply = try s.service.layoutWithFormats(a, io, boot_preview.reader(), apply_layout, formats.items);
-    var apply_preview = try s.program.Preview.init(boot_preview.reader(), apply.program);
-    var cleanup = try s.service.layout(a, io, apply_preview.reader(), final.layout.?);
+    var apply = try storage.service.layoutWithFormats(a, io, boot_preview.reader(), apply_layout, formats.items);
+    var apply_preview = try storage.program.Preview.init(boot_preview.reader(), apply.program);
+    var cleanup = try storage.service.layout(a, io, apply_preview.reader(), final.layout.?);
     const approved = try @import("planner.zig").validate(a, inventory, draft);
     const request_digest = try proto.hexDigest(approved.digest);
-    bootstrap.program = try s.program.bindRequest(a, bootstrap.program, request_digest);
-    apply.program = try s.program.bindRequest(a, apply.program, request_digest);
-    cleanup.program = try s.program.bindRequest(a, cleanup.program, request_digest);
-    const bundle: s.maintenance_session.Bundle = .{
+    bootstrap.program = try storage.program.bindRequest(a, bootstrap.program, request_digest);
+    apply.program = try storage.program.bindRequest(a, apply.program, request_digest);
+    cleanup.program = try storage.program.bindRequest(a, cleanup.program, request_digest);
+    const bundle: storage.maintenance_session.Bundle = .{
         .session = resources.session,
         .control = resources.control,
         .bootstrap = bootstrap.program,
@@ -123,8 +123,8 @@ pub fn compile(a: std.mem.Allocator, io: std.Io, reader: s.device.Reader, invent
         .cleanup = cleanup.program,
         .bootstrap_store = resources.bootstrap_store,
         .cleanup_store = resources.cleanup_store,
-        .apply_store = .{ .session = resources.session, .block_size = block, .extents = try a.dupe(s.model.Range, &.{resources.tail}) },
-        .protected = try a.dupe(s.model.Range, &.{resources.esp}),
+        .apply_store = .{ .session = resources.session, .block_size = block, .extents = try a.dupe(storage.model.Range, &.{resources.tail}) },
+        .protected = try a.dupe(storage.model.Range, &.{resources.esp}),
     };
     try bundle.validate(a, target);
     return .{ .bundle = bundle, .bootstrap = bootstrap, .apply = apply, .cleanup = cleanup, .allocator = a };
@@ -135,19 +135,19 @@ pub fn compile(a: std.mem.Allocator, io: std.Io, reader: s.device.Reader, invent
 /// must also capture those original bytes before the tail store is initialized.
 /// Identity writes use the existing complete before-image executor machinery;
 /// unallocated residue needs no preservation and no filesystem-specific branch.
-fn prepareTail(a: std.mem.Allocator, io: std.Io, reader: s.device.Reader, entries: []const s.partition_table.Entry, tail: s.model.Range, block: u32, p: s.program.Program) !s.program.Program {
-    var builder = s.program.Builder.init(a, reader);
+fn prepareTail(a: std.mem.Allocator, io: std.Io, reader: storage.device.Reader, entries: []const storage.partition_table.Entry, tail: storage.model.Range, block: u32, p: storage.program.Program) !storage.program.Program {
+    var builder = storage.program.Builder.init(a, reader);
     try builder.steps.appendSlice(a, p.steps);
     try builder.guards.appendSlice(a, p.guards);
     try builder.evidence.appendSlice(a, p.evidence);
-    var source = s.program.Builder.init(a, reader);
+    var source = storage.program.Builder.init(a, reader);
     for (entries) |entry| {
         if (!entry.range.overlaps(tail)) continue;
-        var view: s.program.Builder.View = .{ .builder = &source, .version = 0, .range = entry.range };
-        const driver = try s.filesystem.BUILTIN.detect(io, view.reader());
+        var view: storage.program.Builder.View = .{ .builder = &source, .version = 0, .range = entry.range };
+        const driver = try storage.filesystem.BUILTIN.detect(io, view.reader());
         const fs = try driver.open(a, io, view.reader(), false);
         defer fs.close();
-        for (try s.service.coverage(a, fs)) |local| {
+        for (try storage.service.coverage(a, fs)) |local| {
             const start = @max(entry.range.offset + local.offset, tail.offset);
             const end = @min(entry.range.offset + try local.end(), try tail.end());
             if (start >= end) continue;
@@ -155,7 +155,7 @@ fn prepareTail(a: std.mem.Allocator, io: std.Io, reader: s.device.Reader, entrie
             // the reserved tail. Allocation granules are sector-aligned.
             var offset = start;
             while (offset < end) {
-                const range: s.model.Range = .{ .offset = offset, .length = @min(end - offset, s.mutation.MAX_RECORD_BYTES) };
+                const range: storage.model.Range = .{ .offset = offset, .length = @min(end - offset, storage.mutation.MAX_RECORD_BYTES) };
                 const bytes = try reader.read(a, io, range);
                 defer a.free(bytes);
                 try builder.write(io, range, bytes, false);
@@ -166,7 +166,7 @@ fn prepareTail(a: std.mem.Allocator, io: std.Io, reader: s.device.Reader, entrie
     // A previous completed session may leave capsule signatures in free space.
     // Initialize both heads as bootstrap writes, with ordinary before-images;
     // never weaken RawCapsule.format's refusal to replace an existing capsule.
-    const heads: s.model.Range = .{ .offset = tail.offset, .length = @as(u64, block) * 2 };
+    const heads: storage.model.Range = .{ .offset = tail.offset, .length = @as(u64, block) * 2 };
     if (!try contains(tail, heads)) return error.CapsuleTooSmall;
     const empty = try a.alloc(u8, @intCast(heads.length));
     defer a.free(empty);
@@ -174,8 +174,8 @@ fn prepareTail(a: std.mem.Allocator, io: std.Io, reader: s.device.Reader, entrie
     try builder.write(io, heads, empty, false);
     return builder.finish();
 }
-fn intermediate(a: std.mem.Allocator, entries: []const s.partition_table.Entry, maintenance: s.partition_table.Entry) ![]const s.partition_table.Entry {
-    const output = try a.alloc(s.partition_table.Entry, entries.len + 1);
+fn intermediate(a: std.mem.Allocator, entries: []const storage.partition_table.Entry, maintenance: storage.partition_table.Entry) ![]const storage.partition_table.Entry {
+    const output = try a.alloc(storage.partition_table.Entry, entries.len + 1);
     @memcpy(output[0..entries.len], entries);
     for (output[0..entries.len]) |*entry| if (entry.range.overlaps(maintenance.range)) {
         if (entry.range.offset >= maintenance.range.offset) return error.MaintenanceAreaConflictsWithPartition;
@@ -187,7 +187,7 @@ fn intermediate(a: std.mem.Allocator, entries: []const s.partition_table.Entry, 
 }
 
 test "512-byte GPT tails retain physical recovery-block alignment" {
-    const usable: s.model.Range = .{ .offset = 34 * 512, .length = 128 * 1024 * 1024 - 67 * 512 };
+    const usable: storage.model.Range = .{ .offset = 34 * 512, .length = 128 * 1024 * 1024 - 67 * 512 };
     const tail = try tailRange(usable, 16 * 1024 * 1024 + 1, 4096);
     try std.testing.expectEqual(0, tail.offset % 4096);
     try std.testing.expectEqual(0, tail.length % 4096);

@@ -65,8 +65,19 @@ test "native semantic formatting is accepted by independent tools" {
         file.close(IO);
         var image = try Image.open(IO, path, IDENTITY, case.fixture.sector_size);
         defer image.close(IO);
+        const is_ext = case.fixture.filesystem == .ext2 or case.fixture.filesystem == .ext3 or case.fixture.filesystem == .ext4;
+        if (is_ext) {
+            const old_boot: [4096]u8 = @splat(0xa5);
+            try image.file.writePositionalAll(IO, &old_boot, 0);
+        }
         const p = try storage.service.filesystem(a, IO, image.reader(), .{ .offset = 0, .length = image.target.capacity }, driver, .{ .operation = .create });
         try execute(a, &image, home, "create", p);
+        if (is_ext) {
+            var primary: [4096]u8 = undefined;
+            try image.reader().readInto(IO, 0, &primary);
+            try std.testing.expect(std.mem.allEqual(u8, primary[0..1024], 0));
+            try std.testing.expect(std.mem.allEqual(u8, primary[2048..4096], 0));
+        }
         {
             const fs = try driver.open(a, IO, image.reader(), false);
             defer fs.close();

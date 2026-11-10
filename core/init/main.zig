@@ -21,7 +21,7 @@ fn panicImpl(message: []const u8, return_addr: ?usize) noreturn {
     emergency.write("PIZZA_MAINT_PANIC: ");
     emergency.write(message);
     emergency.write("\n");
-    recovery.shutdown(.reboot);
+    recovery.run(.rescue, .{});
 }
 
 /// RAM-only PID 1. Fatal failures request controlled reboot; unsuccessful
@@ -35,8 +35,8 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn fail(err: anyerror) noreturn {
-    std.log.err("PIZZA_MAINT_DEGRADED: {t}; requesting controlled reboot", .{err});
-    recovery.shutdown(.reboot);
+    std.log.err("PIZZA_MAINT_DEGRADED: {t}; holding for explicit recovery", .{err});
+    recovery.run(.rescue, .{});
 }
 
 fn run(allocator: std.mem.Allocator, io: std.Io) !void {

@@ -4,7 +4,7 @@ const utils = @import("utils");
 const initramfs = @import("initramfs");
 const journal = @import("journal");
 const clap = @import("clap");
-const h = @import("harness.zig");
+const harness = @import("harness.zig");
 const PARAMS = clap.parseParamsComptime(
     \\-h, --help  Display this help and exit.
     \\--physical  Use exclusively claimed virtio block devices and the production application.
@@ -62,7 +62,7 @@ pub fn run(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, chec
         try file.writePositionalAll(io, application_overlay, (try file.stat(io)).size);
     }
     const disk = try std.fs.path.join(a, &.{ output, "journal.raw" });
-    try h.noComma(disk);
+    try harness.noComma(disk);
     {
         const file = try std.Io.Dir.cwd().createFile(io, disk, .{ .exclusive = true });
         defer file.close(io);
@@ -96,14 +96,14 @@ pub fn run(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, chec
     for ([_][]const u8{ "write", "read" }, 0..) |mode, index| {
         const directory = try std.fs.path.join(a, &.{ output, mode });
         try std.Io.Dir.cwd().createDirPath(io, directory);
-        var command = try h.baseCommand(a, io, env, directory, 4096);
+        var command = try harness.baseCommand(a, io, env, directory, 4096);
         try command.appendSlice(&.{ "-nic", "none", "-kernel", kernel, "-initrd", image, "-append", try a.print("console=ttyS0 loglevel=4 panic=1 rdinit=/init pizza.executor_test={s} pizza.physical_test={d}", .{ mode, if (physical) sector else @as(u32, 0) }), "-drive", try a.print("if=none,id=recovery,format=raw,file={s}", .{disk}), "-device", "virtio-blk-pci,drive=recovery,serial=pz-recovery", "-no-reboot" });
         if (physical) for (physical_names, 0..) |name, disk_index| {
             if (index == 1 and std.mem.eql(u8, name, "source")) continue;
             try command.appendSlice(&.{ "-drive", try a.print("if=none,id=test{d},format=raw,file={s}/target-{s}.raw", .{ disk_index, output, name }), "-device", try a.print("virtio-blk-pci,drive=test{d},serial=pz-{s},logical_block_size={d},physical_block_size={d}", .{ disk_index, name, sector, sector }) });
         };
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ directory, "command.json" }), .data = try std.json.Stringify.valueAlloc(a, command.items, .{ .whitespace = .indent_2 }) });
-        const serial = try h.runVm(a, io, env, command.items, directory, parsed.args.timeout orelse 180);
+        const serial = try harness.runVm(a, io, env, command.items, directory, parsed.args.timeout orelse 180);
         serials[index] = serial;
         if (!has(serial, try a.print("PIZZA_EXECUTOR_READY: {s}", .{mode})) or !has(serial, "PIZZA_EXECUTOR_UNMOUNTED") or !has(serial, "Power down") or has(serial, "PIZZA_EXECUTOR_TEST_FAILED") or has(serial, "Kernel panic")) return error.ExecutorBootFailed;
     }

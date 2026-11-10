@@ -1,0 +1,7 @@
+{
+  "version": "systemd-262.1-1",
+  "url": "https://archive.archlinux.org/packages/s/systemd/systemd-262.1-1-x86_64.pkg.tar.zst",
+  "archive_sha256": "fd6d2e14fa2b42c793ae5c52054414a5b74932b152023453facd287f268b3622",
+  "member": "usr/lib/systemd/boot/efi/linuxx64.efi.stub",
+  "sha256": "fafec0d2adf3dd9669cfae049ec11b801c9a94000e0cd86a2cbc02bc60d8e277"
+}

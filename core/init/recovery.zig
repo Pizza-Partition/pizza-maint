@@ -181,6 +181,7 @@ fn flushMounts() !void {
         }
     }
     if (!eof) return error.MountTableReadFailed;
+    defer linux.sync();
     // Reverse mount order handles children before parents. Busy/unsupported
     // layouts fail into rescue instead of using lazy or forced unmounts.
     var lines = std.mem.splitBackwardsScalar(u8, buffer[0..length], '\n');

@@ -1,14 +1,14 @@
 //! Every libntfs device operation stays inside a locked, bounded arena session.
 const std = @import("std");
-pub const c = @import("ntfs_c");
+pub const c_api = @import("ntfs_c");
 const Reader = @import("../../device.zig").Reader;
 const Builder = @import("../../mutation.zig").Builder;
 const format = @import("format.zig");
 extern "c" fn __errno_location() *c_int;
-extern "c" fn pizza_ntfs_mount_core(c_int) ?*c.ntfs_volume;
-extern "c" fn pizza_ntfs_close_core(*c.ntfs_volume) c_int;
-extern "c" fn pizza_ntfs_health_core(*c.ntfs_volume) c_int;
-extern "c" fn pizza_ntfs_restore_flags_core(*c.ntfs_volume, u16) c_int;
+extern "c" fn pizza_ntfs_mount_core(c_int) ?*c_api.ntfs_volume;
+extern "c" fn pizza_ntfs_close_core(*c_api.ntfs_volume) c_int;
+extern "c" fn pizza_ntfs_health_core(*c_api.ntfs_volume) c_int;
+extern "c" fn pizza_ntfs_restore_flags_core(*c_api.ntfs_volume, u16) c_int;
 var mutex: std.Io.Mutex = .init;
 var current: ?*Session = null;
 pub const Session = struct {
@@ -17,7 +17,7 @@ pub const Session = struct {
     io: std.Io,
     reader: Reader,
     overlay: ?*Builder,
-    volume: ?*c.ntfs_volume = null,
+    volume: ?*c_api.ntfs_volume = null,
     failure: ?anyerror = null,
     allocated: usize = 0,
     position: i64 = 0,
@@ -85,11 +85,11 @@ fn fail(self: *Session, err: anyerror) c_int {
     return -1;
 }
 
-fn active(dev: [*c]c.struct_ntfs_device) ?*Session {
+fn active(dev: [*c]c_api.struct_ntfs_device) ?*Session {
     if (current == null or dev == null) return null;
     return current;
 }
-fn openDevice(dev: [*c]c.struct_ntfs_device, flags: c_int) callconv(.c) c_int {
+fn openDevice(dev: [*c]c_api.struct_ntfs_device, flags: c_int) callconv(.c) c_int {
     const self = active(dev) orelse return -1;
     if (self.overlay == null and flags & 3 != 0) return fail(self, error.NtfsWriteDenied);
     dev.*.d_private = self;
@@ -97,11 +97,11 @@ fn openDevice(dev: [*c]c.struct_ntfs_device, flags: c_int) callconv(.c) c_int {
     self.position = 0;
     return 0;
 }
-fn closeDevice(dev: [*c]c.struct_ntfs_device) callconv(.c) c_int {
+fn closeDevice(dev: [*c]c_api.struct_ntfs_device) callconv(.c) c_int {
     dev.*.d_state = 0;
     return 0;
 }
-fn seek(dev: [*c]c.struct_ntfs_device, offset: i64, whence: c_int) callconv(.c) i64 {
+fn seek(dev: [*c]c_api.struct_ntfs_device, offset: i64, whence: c_int) callconv(.c) i64 {
     const self = active(dev) orelse return -1;
     const base: i64 = switch (whence) {
         0 => 0,
@@ -114,7 +114,7 @@ fn seek(dev: [*c]c.struct_ntfs_device, offset: i64, whence: c_int) callconv(.c) 
     self.position = end;
     return end;
 }
-fn pread(dev: [*c]c.struct_ntfs_device, data: ?*anyopaque, count: i64, offset: i64) callconv(.c) i64 {
+fn pread(dev: [*c]c_api.struct_ntfs_device, data: ?*anyopaque, count: i64, offset: i64) callconv(.c) i64 {
     const self = active(dev) orelse return -1;
     if (data == null or count < 0 or offset < 0) return fail(self, error.NtfsInvalidIo);
     // End-of-device reads are permitted while detecting capacity; a short read
@@ -124,32 +124,32 @@ fn pread(dev: [*c]c.struct_ntfs_device, data: ?*anyopaque, count: i64, offset: i
     self.reader.readInto(self.io, @intCast(offset), @as([*]u8, @ptrCast(data.?))[0..length]) catch |err| return fail(self, err);
     return @intCast(length);
 }
-fn pwrite(dev: [*c]c.struct_ntfs_device, data: ?*const anyopaque, count: i64, offset: i64) callconv(.c) i64 {
+fn pwrite(dev: [*c]c_api.struct_ntfs_device, data: ?*const anyopaque, count: i64, offset: i64) callconv(.c) i64 {
     const self = active(dev) orelse return -1;
     const overlay = self.overlay orelse return fail(self, error.NtfsWriteDenied);
     if (data == null or count < 0 or offset < 0) return fail(self, error.NtfsInvalidIo);
     overlay.stageWrite(self.io, @intCast(offset), @as([*]const u8, @ptrCast(data.?))[0..@intCast(count)]) catch |err| return fail(self, err);
     return count;
 }
-fn read(dev: [*c]c.struct_ntfs_device, data: ?*anyopaque, count: i64) callconv(.c) i64 {
+fn read(dev: [*c]c_api.struct_ntfs_device, data: ?*anyopaque, count: i64) callconv(.c) i64 {
     const self = active(dev) orelse return -1;
     const n = pread(dev, data, count, self.position);
     if (n > 0) self.position += n;
     return n;
 }
-fn write(dev: [*c]c.struct_ntfs_device, data: ?*const anyopaque, count: i64) callconv(.c) i64 {
+fn write(dev: [*c]c_api.struct_ntfs_device, data: ?*const anyopaque, count: i64) callconv(.c) i64 {
     const self = active(dev) orelse return -1;
     const n = pwrite(dev, data, count, self.position);
     if (n > 0) self.position += n;
     return n;
 }
-fn sync(_: [*c]c.struct_ntfs_device) callconv(.c) c_int {
+fn sync(_: [*c]c_api.struct_ntfs_device) callconv(.c) c_int {
     return 0;
 }
 // stat and ioctl are described in C to use the target's exact libc layouts.
-extern "c" fn pizza_ntfs_stat([*c]c.struct_ntfs_device, ?*c.struct_stat) c_int;
-extern "c" fn pizza_ntfs_ioctl([*c]c.struct_ntfs_device, c_ulong, ?*anyopaque) c_int;
-export var ntfs_device_unix_io_ops: c.struct_ntfs_device_operations = .{ .open = openDevice, .close = closeDevice, .seek = seek, .read = read, .write = write, .pread = pread, .pwrite = pwrite, .sync = sync, .stat = pizza_ntfs_stat, .ioctl = pizza_ntfs_ioctl };
+extern "c" fn pizza_ntfs_stat([*c]c_api.struct_ntfs_device, ?*c_api.struct_stat) c_int;
+extern "c" fn pizza_ntfs_ioctl([*c]c_api.struct_ntfs_device, c_ulong, ?*anyopaque) c_int;
+export var ntfs_device_unix_io_ops: c_api.struct_ntfs_device_operations = .{ .open = openDevice, .close = closeDevice, .seek = seek, .read = read, .write = write, .pread = pread, .pwrite = pwrite, .sync = sync, .stat = pizza_ntfs_stat, .ioctl = pizza_ntfs_ioctl };
 export fn pizza_ntfs_capacity() callconv(.c) u64 {
     return if (current) |s| s.reader.target.capacity else 0;
 }

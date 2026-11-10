@@ -53,7 +53,9 @@ jobs:
         run: zig build -Doptimize=safe
       - name: Assert static PID 1 binary
         run: |
-          if readelf -lW zig-out/bin/pizza-init | grep -q INTERP; then
+          test -s zig-out/bin/pizza-init
+          readelf -lW zig-out/bin/pizza-init > pid1-program-headers.txt
+          if grep -q INTERP pid1-program-headers.txt; then
             echo 'Maintenance PID1 must not resolve host libc'; exit 1
           fi
 

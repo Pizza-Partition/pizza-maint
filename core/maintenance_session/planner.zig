@@ -2,24 +2,24 @@
 //! This does not grant write capability; offline compilation owns feasibility.
 const std = @import("std");
 const proto = @import("proto");
-const w = proto.wire;
+const wire = proto.wire;
 fn eq(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
 }
-fn original(disk: w.HostDisk, id: []const u8) ?w.HostPartition {
+fn original(disk: wire.HostDisk, id: []const u8) ?wire.HostPartition {
     for (disk.partitions) |p| if (eq(p.id, id)) return p;
     return null;
 }
-fn has(intents: []const w.PlanIntent, id: []const u8, kind: w.IntentKind) bool {
+fn has(intents: []const wire.PlanIntent, id: []const u8, kind: wire.IntentKind) bool {
     for (intents) |i| if (eq(i.partition_id, id) and i.kind == kind) return true;
     return false;
 }
-fn diagnostic(a: std.mem.Allocator, list: *std.ArrayList(w.Diagnostic), code: []const u8, message: []const u8, id: ?[]const u8) !void {
+fn diagnostic(a: std.mem.Allocator, list: *std.ArrayList(wire.Diagnostic), code: []const u8, message: []const u8, id: ?[]const u8) !void {
     try list.append(a, .{ .code = code, .message = message, .partition_id = id, .severity = .@"error" });
 }
-pub fn optimize(a: std.mem.Allocator, input: []const w.PlanIntent) ![]const w.PlanIntent {
+pub fn optimize(a: std.mem.Allocator, input: []const wire.PlanIntent) ![]const wire.PlanIntent {
     if (input.len > 16384) return error.PlanTooLarge;
-    var out: std.ArrayList(w.PlanIntent) = .empty;
+    var out: std.ArrayList(wire.PlanIntent) = .empty;
     for (input) |intent| {
         var handled = false;
         if (intent.kind == .resize or intent.kind == .move or intent.kind == .label or intent.kind == .delete) {
@@ -49,12 +49,12 @@ pub fn optimize(a: std.mem.Allocator, input: []const w.PlanIntent) ![]const w.Pl
     }
     return out.toOwnedSlice(a);
 }
-pub fn validate(a: std.mem.Allocator, inventory: w.InventorySnapshot, draft: w.PlanDraft) !w.ValidatedPlan {
+pub fn validate(a: std.mem.Allocator, inventory: wire.InventorySnapshot, draft: wire.PlanDraft) !wire.ValidatedPlan {
     if (draft.version != 4 or inventory.version != 4) return error.UnsupportedProtocolVersion;
     _ = try proto.hexDigest(draft.snapshot_id);
     _ = try proto.hexDigest(draft.disk_identity);
     if (draft.layout.len > 4096 or draft.intents.len > 16384) return error.PlanTooLarge;
-    var diags: std.ArrayList(w.Diagnostic) = .empty;
+    var diags: std.ArrayList(wire.Diagnostic) = .empty;
     if (!eq(inventory.snapshot_id, draft.snapshot_id)) try diagnostic(a, &diags, "stale_inventory", "Disk geometry changed; refresh the inventory before preparing.", null);
     const disk = for (inventory.disks) |d| {
         if (d.identity) |id| if (eq(id, draft.disk_identity)) break d;
@@ -120,7 +120,7 @@ pub fn validate(a: std.mem.Allocator, inventory: w.InventorySnapshot, draft: w.P
     const normalized = try optimize(a, draft.intents);
     for (normalized) |intent| {
         if (intent.kind == .barrier) continue;
-        const desired: ?w.DesiredPartition = for (draft.layout) |p| {
+        const desired: ?wire.DesiredPartition = for (draft.layout) |p| {
             if (eq(p.id, intent.partition_id)) break p;
         } else null;
         if (intent.kind == .delete) {

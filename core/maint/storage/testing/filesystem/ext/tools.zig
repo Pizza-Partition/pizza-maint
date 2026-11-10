@@ -31,19 +31,22 @@ const IDENTITY = @import("../../fixture.zig").IDENTITY;
 /// Force logical block zero above the shrink boundary, for both indirect-block
 /// and extent-based inodes. fsck independently verifies the fixture afterwards.
 pub fn movePayloadToTail(a: std.mem.Allocator, io: std.Io, path: []const u8) !void {
+    return moveNamedToTail(a, io, path, "/payload");
+}
+pub fn moveNamedToTail(a: std.mem.Allocator, io: std.Io, path: []const u8, name: [:0]const u8) !void {
     var image = try Image.open(io, path, IDENTITY, 512);
-    var original: ext.c.blk64_t = 0;
-    var tail: ext.c.blk64_t = 0;
+    var original: ext.c_api.blk64_t = 0;
+    var tail: ext.c_api.blk64_t = 0;
     var block_size: usize = 0;
     {
         const session = try ext.Session.open(a, io, image.reader());
         defer session.close();
-        var inode: ext.c.ext2_ino_t = 0;
-        try session.check(ext.c.ext2fs_namei(session.fs, ext.c.EXT2_ROOT_INO, ext.c.EXT2_ROOT_INO, "/payload", &inode));
-        try session.check(ext.c.ext2fs_bmap2(session.fs, inode, null, null, 0, 0, null, &original));
-        try session.check(ext.c.ext2fs_read_bitmaps(session.fs));
-        const blocks = ext.c.ext2fs_blocks_count(session.fs.*.super);
-        try session.check(ext.c.ext2fs_find_first_zero_block_bitmap2(session.fs.*.block_map, blocks * 3 / 4, blocks - 1, &tail));
+        var inode: ext.c_api.ext2_ino_t = 0;
+        try session.check(ext.c_api.ext2fs_namei(session.fs, ext.c_api.EXT2_ROOT_INO, ext.c_api.EXT2_ROOT_INO, name, &inode));
+        try session.check(ext.c_api.ext2fs_bmap2(session.fs, inode, null, null, 0, 0, null, &original));
+        try session.check(ext.c_api.ext2fs_read_bitmaps(session.fs));
+        const blocks = ext.c_api.ext2fs_blocks_count(session.fs.*.super);
+        try session.check(ext.c_api.ext2fs_find_first_zero_block_bitmap2(session.fs.*.block_map, blocks * 3 / 4, blocks - 1, &tail));
         block_size = session.fs.*.blocksize;
     }
     const bytes = try a.alloc(u8, block_size);
@@ -52,7 +55,7 @@ pub fn movePayloadToTail(a: std.mem.Allocator, io: std.Io, path: []const u8) !vo
     try image.file.sync(io);
     image.close(io);
     for ([_][]const u8{
-        try a.print("bmap /payload 0 {d}", .{tail}),
+        try a.print("bmap {s} 0 {d}", .{ name, tail }),
         try a.print("freeb {d}", .{original}),
         try a.print("setb {d}", .{tail}),
     }) |request| try command(a, io, &.{ "debugfs", "-w", "-R", request, path });
@@ -73,9 +76,9 @@ pub fn movePayloadToTail(a: std.mem.Allocator, io: std.Io, path: []const u8) !vo
     defer image.close(io);
     const session = try ext.Session.open(a, io, image.reader());
     defer session.close();
-    var inode: ext.c.ext2_ino_t = 0;
-    var observed: ext.c.blk64_t = 0;
-    try session.check(ext.c.ext2fs_namei(session.fs, ext.c.EXT2_ROOT_INO, ext.c.EXT2_ROOT_INO, "/payload", &inode));
-    try session.check(ext.c.ext2fs_bmap2(session.fs, inode, null, null, 0, 0, null, &observed));
+    var inode: ext.c_api.ext2_ino_t = 0;
+    var observed: ext.c_api.blk64_t = 0;
+    try session.check(ext.c_api.ext2fs_namei(session.fs, ext.c_api.EXT2_ROOT_INO, ext.c_api.EXT2_ROOT_INO, name, &inode));
+    try session.check(ext.c_api.ext2fs_bmap2(session.fs, inode, null, null, 0, 0, null, &observed));
     try std.testing.expectEqual(tail, observed);
 }

@@ -117,6 +117,10 @@ const Statfs = extern struct {
 
 pub const TMPFS_MAGIC = 0x01021994;
 pub const RAMFS_MAGIC = 0x858458f6;
+pub const EXT4_SUPER_MAGIC = 0xef53;
+pub const XFS_SUPER_MAGIC = 0x58465342;
+pub const BTRFS_SUPER_MAGIC = 0x9123683e;
+pub const EFIVARFS_MAGIC = 0xde5e81e4;
 
 /// Stable identity of an ordinary image across maintenance boots.
 pub fn imageIdentity(file: std.Io.File) ![32]u8 {

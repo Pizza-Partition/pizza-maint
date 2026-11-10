@@ -1,9 +1,9 @@
 //! Common maintenance actions for an already admitted device. No platform
 //! acquisition, elevation, shell commands or implicit reboots occur here.
 const std = @import("std");
-const s = @import("storage");
-const w = @import("proto").wire;
-const ms = s.maintenance_session;
+const storage = @import("storage");
+const wire = @import("proto").wire;
+const ms = storage.maintenance_session;
 pub const Action = enum { prepare, bootstrap, apply, status, recover, undo, accept, cleanup };
 pub fn restoreBoot(a: std.mem.Allocator, io: std.Io, session: ms.Session, lease: @import("uefi.zig").Lease, variables: @import("uefi.zig").Variables) !void {
     switch (session.phase) {
@@ -11,7 +11,7 @@ pub fn restoreBoot(a: std.mem.Allocator, io: std.Io, session: ms.Session, lease:
         else => return error.MaintenanceStillOwnsBoot,
     }
 }
-pub fn run(a: std.mem.Allocator, io: std.Io, disk: s.device.Device, bundle: ms.Bundle, action: Action, verifier: ?s.program_executor.Verifier, observer: ?s.program_executor.Observer) !w.MaintenanceSession {
+pub fn run(a: std.mem.Allocator, io: std.Io, disk: storage.device.Device, bundle: ms.Bundle, action: Action, verifier: ?storage.program_executor.Verifier, observer: ?storage.program_executor.Observer) !wire.MaintenanceSession {
     var session = if (action == .prepare) try ms.Session.prepare(a, io, disk, bundle) else try ms.Session.open(a, io, disk, bundle);
     switch (action) {
         .prepare, .status => {},
@@ -24,19 +24,20 @@ pub fn run(a: std.mem.Allocator, io: std.Io, disk: s.device.Device, bundle: ms.B
     }
     return project(a, session);
 }
-pub fn project(a: std.mem.Allocator, session: ms.Session) !w.MaintenanceSession {
+pub fn project(a: std.mem.Allocator, session: ms.Session) !wire.MaintenanceSession {
     return .{ .version = 4, .id = try a.dupe(u8, &std.fmt.bytesToHex(session.bundle.session, .lower)), .plan_digest = try a.dupe(u8, &std.fmt.bytesToHex(session.bundle.digest(), .lower)), .phase = switch (session.phase) {
-        .prepared => .prepared,
+        .preparing, .prepared => .prepared,
         .bootstrapping, .initialized => .bootstrapping,
         .preparing_apply, .applying => .applying,
         .verified => .verified,
         .undoing, .restoring_bootstrap => .undoing,
         .accepted => .accepted,
-        .cleaning, .committing_cleanup => .cleaning,
+        .preparing_cleanup, .cleaning, .committing_cleanup => .cleaning,
         .completed => .completed,
         .rolled_back => .rolled_back,
         .failed_bootstrap, .failed_cleanup => .failed,
     }, .message = switch (session.phase) {
+        .preparing => "Initializing maintenance recovery anchors.",
         .prepared => "Maintenance recovery anchors prepared.",
         .bootstrapping => "Creating the temporary maintenance area.",
         .initialized => "Temporary maintenance area verified; user plan has not run.",
@@ -46,6 +47,7 @@ pub fn project(a: std.mem.Allocator, session: ms.Session) !w.MaintenanceSession 
         .undoing => "Restoring user changes.",
         .restoring_bootstrap => "Restoring the layout preceding maintenance setup.",
         .accepted => "Changes accepted. Undo is closed; cleanup is pending.",
+        .preparing_cleanup => "Reinitializing cleanup recovery after rollback.",
         .cleaning => "Removing the temporary maintenance area.",
         .committing_cleanup => "Finalizing verified cleanup.",
         .completed => "Final layout verified; boot restoration may proceed.",

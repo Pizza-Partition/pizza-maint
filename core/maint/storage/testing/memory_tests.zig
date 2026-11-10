@@ -1,8 +1,8 @@
 //! Hard allocation boundaries plus continuously observed simulated headroom.
 const std = @import("std");
 const storage = @import("storage");
-const m = storage.memory;
-const MiB = m.MI_B;
+const memory = storage.memory;
+const MiB = memory.MI_B;
 const GI_B = 1024 * MiB;
 const Fake = struct {
     total: u64 = 8 * GI_B,
@@ -11,11 +11,11 @@ const Fake = struct {
     minimum: u64 = std.math.maxInt(u64),
     backing_calls: usize = 0,
     crossed: bool = false,
-    fn sample(context: *const anyopaque, _: std.Io) !m.linux.Snapshot {
+    fn sample(context: *const anyopaque, _: std.Io) !memory.linux.Snapshot {
         const self: *const Fake = @ptrCast(@alignCast(context));
         return .{ .total = self.total, .available = self.available, .effective_total = self.total, .effective_available = self.available };
     }
-    fn probe(self: *Fake) m.Probe {
+    fn probe(self: *Fake) memory.Probe {
         return .{ .context = self, .sample_fn = sample };
     }
     fn rawAlloc(context: *anyopaque, n: usize, alignment: std.mem.Alignment, ra: usize) ?[*]u8 {
@@ -39,17 +39,17 @@ const Fake = struct {
 test "adaptive budgets scale with available RAM and preserve separate reserves" {
     var fake: Fake = .{};
     const s = try fake.probe().sample(std.testing.io);
-    const b = try m.Budget.derive(s, .{});
+    const b = try memory.Budget.derive(s, .{});
     try std.testing.expectEqual(@max(512 * MiB, fake.total / 10), b.reserve);
     try std.testing.expectEqual(fake.available, b.cache_bytes + b.reserve + b.work_reserve + b.recovery_reserve);
     try std.testing.expect(b.cache_bytes > 128 * MiB);
     fake.available = 512 * MiB;
-    try std.testing.expectError(error.InsufficientMemoryBudget, m.Budget.derive(try fake.probe().sample(std.testing.io), .{}));
-    try std.testing.expectError(error.InvalidMemoryPolicy, m.Budget.derive(s, .{ .reserve_percent = 101 }));
+    try std.testing.expectError(error.InsufficientMemoryBudget, memory.Budget.derive(try fake.probe().sample(std.testing.io), .{}));
+    try std.testing.expectError(error.InvalidMemoryPolicy, memory.Budget.derive(s, .{ .reserve_percent = 101 }));
 }
 test "hard allocation quota refuses before calling backing allocator" {
     var fake: Fake = .{};
-    var controller = try m.Controller.init(std.testing.io, .{ .probe = fake.probe(), .policy = .{ .cache_cap = 4096 } });
+    var controller = try memory.Controller.init(std.testing.io, .{ .probe = fake.probe(), .policy = .{ .cache_cap = 4096 } });
     controller.backing = fake.backing();
     const a = controller.allocator();
     const bytes = try a.alloc(u8, 4096);
@@ -64,7 +64,7 @@ test "hard allocation quota refuses before calling backing allocator" {
 }
 test "external pressure denies growth without ever consuming safety reserve" {
     var fake: Fake = .{};
-    var controller = try m.Controller.init(std.testing.io, .{ .probe = fake.probe() });
+    var controller = try memory.Controller.init(std.testing.io, .{ .probe = fake.probe() });
     fake.floor = controller.budget.reserve;
     controller.backing = fake.backing();
     fake.available = controller.budget.reserve + controller.budget.work_reserve + controller.budget.recovery_reserve + 4096;
@@ -79,7 +79,7 @@ test "external pressure denies growth without ever consuming safety reserve" {
 }
 test "temporary safety breach is latched after available memory recovers" {
     var fake: Fake = .{};
-    var controller = try m.Controller.init(std.testing.io, .{ .probe = fake.probe() });
+    var controller = try memory.Controller.init(std.testing.io, .{ .probe = fake.probe() });
     const floor = controller.budget.reserve;
     fake.available = floor - 1;
     try std.testing.expectError(error.MemorySafetyReserveBreached, controller.check());
@@ -91,7 +91,7 @@ test "temporary safety breach is latched after available memory recovers" {
 }
 test "guard accounts arena growth and returns every scratch page" {
     var fake: Fake = .{};
-    var controller = try m.Controller.init(std.testing.io, .{ .probe = fake.probe(), .policy = .{ .cache_cap = MiB } });
+    var controller = try memory.Controller.init(std.testing.io, .{ .probe = fake.probe(), .policy = .{ .cache_cap = MiB } });
     controller.backing = fake.backing();
     {
         var arena: std.heap.ArenaAllocator = .init(controller.allocator());
@@ -108,10 +108,10 @@ test "guard accounts arena growth and returns every scratch page" {
 }
 test "same controller accounts concurrent allocation lanes" {
     var fake: Fake = .{};
-    var controller = try m.Controller.init(std.testing.io, .{ .probe = fake.probe(), .policy = .{ .cache_cap = MiB } });
+    var controller = try memory.Controller.init(std.testing.io, .{ .probe = fake.probe(), .policy = .{ .cache_cap = MiB } });
     controller.backing = fake.backing();
     const Context = struct {
-        controller: *m.Controller,
+        controller: *memory.Controller,
         fn run(self: *@This()) anyerror!void {
             const a = self.controller.allocator();
             const bytes = try a.alloc(u8, 4096);

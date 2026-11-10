@@ -1,12 +1,12 @@
 //! Physical chunk constraints and metadata encodings, never placement policy.
 const std = @import("std");
-const s = @import("../../semantic.zig");
+const semantic = @import("../../semantic.zig");
 const model = @import("../../model.zig");
 const device = @import("../../device.zig");
 const mutation = @import("../../mutation.zig");
 const Builder = @import("../../mutation.zig").Builder;
 const root = @import("root.zig");
-const f = @import("format.zig");
+const format = @import("format.zig");
 const scan = @import("scan.zig");
 const create = @import("create.zig");
 const State = struct {
@@ -16,8 +16,8 @@ const State = struct {
     snapshot: model.Snapshot,
     loaded: ?scan.Graph = null,
     repair_mode: bool = false,
-    units: ?[]s.AllocationUnit = null,
-    objects: ?[]s.Object = null,
+    units: ?[]semantic.AllocationUnit = null,
+    objects: ?[]semantic.Object = null,
     fn cast(ctx: *anyopaque) *@This() {
         return @ptrCast(@alignCast(ctx));
     }
@@ -25,13 +25,13 @@ const State = struct {
         if (self.loaded == null) self.loaded = try scan.load(self.a, self.io, self.reader, !self.repair_mode);
         return &self.loaded.?;
     }
-    fn allocations(self: *@This()) ![]s.AllocationUnit {
+    fn allocations(self: *@This()) ![]semantic.AllocationUnit {
         if (self.units) |units| return units;
-        var units: std.ArrayList(s.AllocationUnit) = .empty;
+        var units: std.ArrayList(semantic.AllocationUnit) = .empty;
         const g = try self.graph();
         for (g.chunks, 0..) |chunk, ci| for (chunk.stripes) |stripe| {
             var movable = true;
-            for (f.MIRRORS) |position| if (stripe.physical < position + 65536 and position < stripe.physical + chunk.length) {
+            for (format.MIRRORS) |position| if (stripe.physical < position + 65536 and position < stripe.physical + chunk.length) {
                 movable = false;
             };
             const sources = try self.a.dupe(model.Range, &.{.{ .offset = stripe.physical, .length = chunk.length }});
@@ -42,8 +42,8 @@ const State = struct {
     }
 };
 const IDENTITY: u8 = 0;
-pub const DRIVER: s.Driver = .{ .filesystem = .btrfs, .context = &IDENTITY, .operations = &root.OPERATIONS, .vtable = &.{ .probe = root.probe, .open = open } };
-fn open(_: *const anyopaque, a: std.mem.Allocator, io: std.Io, reader: device.Reader, blank: bool) !s.Filesystem {
+pub const DRIVER: semantic.Driver = .{ .filesystem = .btrfs, .context = &IDENTITY, .operations = &root.OPERATIONS, .vtable = &.{ .probe = root.probe, .open = open } };
+fn open(_: *const anyopaque, a: std.mem.Allocator, io: std.Io, reader: device.Reader, blank: bool) !semantic.Filesystem {
     const state = try a.create(State);
     state.* = .{ .a = a, .io = io, .reader = reader, .snapshot = if (blank) .{ .filesystem = .btrfs, .target = reader.target, .generation = 0, .block_size = 4096, .filesystem_bytes = 0, .clean = true, .capabilities = &root.OPERATIONS } else try root.inspect(&IDENTITY, a, io, reader) };
     return .{ .context = state, .vtable = &OPS };
@@ -55,23 +55,23 @@ fn close(ctx: *anyopaque) void {
 fn inspect(ctx: *anyopaque) !model.Snapshot {
     return State.cast(ctx).snapshot;
 }
-fn object(ctx: *anyopaque, cursor: *s.Cursor) !?s.Object {
+fn object(ctx: *anyopaque, cursor: *semantic.Cursor) !?semantic.Object {
     const state = State.cast(ctx);
     if (state.snapshot.filesystem_bytes == 0) return null;
     if (state.objects == null) {
-        var objects: std.ArrayList(s.Object) = .empty;
+        var objects: std.ArrayList(semantic.Object) = .empty;
         const g = try state.graph();
         for (g.chunks, 0..) |chunk, i| try objects.append(state.a, .{ .id = i + 1, .kind = .metadata, .bytes = chunk.length });
         for (g.trees.items) |tree| {
             const is_files = tree.owner == 5 or (tree.owner >= 256 and tree.owner < (@as(u64, 1) << 63));
             if (!is_files) continue;
             for (tree.leaves) |logical| for ((try g.node(logical)).entries) |entry| {
-                if (entry.key.kind != f.c.BTRFS_INODE_ITEM_KEY) continue;
+                if (entry.key.kind != format.c_api.BTRFS_INODE_ITEM_KEY) continue;
                 const inode = entry.data;
-                if (inode.len < @sizeOf(f.c.struct_btrfs_inode_item)) return error.BtrfsInvalidInode;
-                const kind = if (f.get(f.c.struct_btrfs_inode_item, "mode", inode) & 0xf000 == 0x4000) @FieldType(s.Object, "kind").directory else @FieldType(s.Object, "kind").file;
+                if (inode.len < @sizeOf(format.c_api.struct_btrfs_inode_item)) return error.BtrfsInvalidInode;
+                const kind = if (format.get(format.c_api.struct_btrfs_inode_item, "mode", inode) & 0xf000 == 0x4000) @FieldType(semantic.Object, "kind").directory else @FieldType(semantic.Object, "kind").file;
                 // IDs are local to this filesystem instance, separate from chunk owners.
-                try objects.append(state.a, .{ .id = objects.items.len + 1, .kind = kind, .bytes = f.get(f.c.struct_btrfs_inode_item, "size", inode) });
+                try objects.append(state.a, .{ .id = objects.items.len + 1, .kind = kind, .bytes = format.get(format.c_api.struct_btrfs_inode_item, "size", inode) });
             };
         }
         state.objects = try objects.toOwnedSlice(state.a);
@@ -82,7 +82,7 @@ fn object(ctx: *anyopaque, cursor: *s.Cursor) !?s.Object {
     cursor.index += 1;
     return result;
 }
-fn allocation(ctx: *anyopaque, cursor: *s.Cursor) !?s.AllocationUnit {
+fn allocation(ctx: *anyopaque, cursor: *semantic.Cursor) !?semantic.AllocationUnit {
     const state = State.cast(ctx);
     if (state.snapshot.filesystem_bytes == 0) return null;
     const units = try state.allocations();
@@ -91,28 +91,28 @@ fn allocation(ctx: *anyopaque, cursor: *s.Cursor) !?s.AllocationUnit {
     cursor.index += 1;
     return result;
 }
-fn geometry(ctx: *anyopaque, intent: s.Intent) !s.Geometry {
+fn geometry(ctx: *anyopaque, intent: semantic.Intent) !semantic.Geometry {
     const state = State.cast(ctx);
     state.repair_mode = intent.operation == .repair;
     const bytes = if (intent.operation == .grow or intent.operation == .shrink) intent.bytes else if (intent.operation == .create) state.reader.target.capacity else state.snapshot.filesystem_bytes;
     if (bytes > state.reader.target.capacity or bytes < 32 * 1024 * 1024 or bytes % state.snapshot.block_size != 0) return error.BtrfsInvalidResizeSize;
     if ((intent.operation == .grow and bytes < state.snapshot.filesystem_bytes) or (intent.operation == .shrink and bytes > state.snapshot.filesystem_bytes)) return error.BtrfsInvalidResizeDirection;
-    if (intent.operation != .create and bytes < f.get(f.DEV, "bytes_used", (try state.graph()).geometry.dev())) return error.BtrfsInvalidResizeSize;
+    if (intent.operation != .create and bytes < format.get(format.DEV, "bytes_used", (try state.graph()).geometry.dev())) return error.BtrfsInvalidResizeSize;
     var reserved: std.ArrayList(model.Range) = .empty;
     try reserved.append(state.a, .{ .offset = 0, .length = 1024 * 1024 });
-    for (f.MIRRORS) |offset| if (offset < bytes) try reserved.append(state.a, .{ .offset = offset, .length = @min(65536, bytes - offset) });
+    for (format.MIRRORS) |offset| if (offset < bytes) try reserved.append(state.a, .{ .offset = offset, .length = @min(65536, bytes - offset) });
     return .{ .bytes = bytes, .allocation_size = 65536, .private = &IDENTITY, .reserved = try reserved.toOwnedSlice(state.a) };
 }
-fn requirements(ctx: *anyopaque, intent: s.Intent, desired: s.Geometry, _: []const s.Placement) !s.Requirements {
+fn requirements(ctx: *anyopaque, intent: semantic.Intent, desired: semantic.Geometry, _: []const semantic.Placement) !semantic.Requirements {
     const state = State.cast(ctx);
     if (intent.operation == .create) {
-        const reqs = try state.a.alloc(s.Requirement, 2);
+        const reqs = try state.a.alloc(semantic.Requirement, 2);
         for (reqs, [_]u64{ create.SYSTEM_LENGTH, create.MIXED_LENGTH }, 0..) |*r, length, i| r.* = .{ .id = i + 1, .bytes = length, .granule = length, .alignment = 65536, .bounds = .{ .offset = 1024 * 1024, .length = desired.bytes - 1024 * 1024 } };
         return .{ .units = &.{}, .additional = reqs };
     }
     if (intent.operation == .repair) return .{ .units = &.{} };
     const units = try state.allocations();
-    const reqs = try state.a.alloc(s.Requirement, units.len);
+    const reqs = try state.a.alloc(semantic.Requirement, units.len);
     for (units, reqs) |u, *r| {
         // A chunk is one contiguous placement. Only its start, not its size,
         // must have the format's 64 KiB alignment.
@@ -120,7 +120,7 @@ fn requirements(ctx: *anyopaque, intent: s.Intent, desired: s.Geometry, _: []con
     }
     return .{ .units = reqs };
 }
-fn encode(ctx: *anyopaque, intent: s.Intent, desired: s.Geometry, placements: []const s.Placement) !mutation.MutationSet {
+fn encode(ctx: *anyopaque, intent: semantic.Intent, desired: semantic.Geometry, placements: []const semantic.Placement) !mutation.MutationSet {
     const state = State.cast(ctx);
     if (intent.operation == .create) {
         var layout: create.Layout = undefined;
@@ -150,11 +150,11 @@ fn encode(ctx: *anyopaque, intent: s.Intent, desired: s.Geometry, placements: []
         if (p.ranges.len != 1 or p.ranges[0].length != chunk.length) return error.InvalidChunkPlacement;
         const dest = p.ranges[0].offset;
         if (dest == previous) continue;
-        for ((try g.tree(4)).leaves) |logical| for ((try g.node(logical)).entries) |*entry| if (entry.key.kind == f.c.BTRFS_DEV_EXTENT_KEY and entry.key.offset == previous) {
+        for ((try g.tree(4)).leaves) |logical| for ((try g.node(logical)).entries) |*entry| if (entry.key.kind == format.c_api.BTRFS_DEV_EXTENT_KEY and entry.key.offset == previous) {
             entry.key.offset = dest;
         };
         stripe.physical = dest;
-        f.put(f.STRIPE, "offset", chunk.raw[@offsetOf(f.CHUNK, "stripe") + i * @sizeOf(f.STRIPE) ..], dest);
+        format.put(format.STRIPE, "offset", chunk.raw[@offsetOf(format.CHUNK, "stripe") + i * @sizeOf(format.STRIPE) ..], dest);
     };
     var builder = Builder.init(state.a, state.reader);
     defer builder.deinit();
@@ -165,11 +165,11 @@ fn check(ctx: *anyopaque) !model.Check {
     const state = State.cast(ctx);
     return root.check(&IDENTITY, state.a, state.io, state.reader);
 }
-fn verify(ctx: *anyopaque, intent: s.Intent, reader: device.Reader) !model.Check {
+fn verify(ctx: *anyopaque, intent: semantic.Intent, reader: device.Reader) !model.Check {
     const state = State.cast(ctx);
     const snapshot = try root.inspect(&IDENTITY, state.a, state.io, reader);
     if ((intent.operation == .grow or intent.operation == .shrink) and snapshot.filesystem_bytes != intent.bytes) return .{ .consistent = false, .detail = "Btrfs geometry mismatch", .scope = .allocation_metadata };
-    try s.requireCapability(snapshot, .check);
+    try semantic.requireCapability(snapshot, .check);
     return root.check(&IDENTITY, state.a, state.io, reader);
 }
-const OPS: s.FilesystemOps = .{ .close = close, .inspect = inspect, .enumerate_objects = object, .enumerate_allocations = allocation, .describe_geometry = geometry, .requirements = requirements, .encode_changes = encode, .check = check, .verify = verify };
+const OPS: semantic.FilesystemOps = .{ .close = close, .inspect = inspect, .enumerate_objects = object, .enumerate_allocations = allocation, .describe_geometry = geometry, .requirements = requirements, .encode_changes = encode, .check = check, .verify = verify };

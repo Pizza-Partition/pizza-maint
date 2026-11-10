@@ -1,16 +1,16 @@
 //! Immutable terminal receipt in a preallocated FAT32 ESP file. Raw writes touch
 //! its admitted extents only; allocation metadata and recovery capsules stay frozen.
 const std = @import("std");
-const s = @import("storage");
+const storage = @import("storage");
 const proto = @import("proto");
 pub const MAX_BYTES = 65536;
-pub const Anchor = struct { proof: s.esp_anchor.Proof, path: []const s.esp_anchor.ShortName };
+pub const Anchor = struct { proof: storage.esp_anchor.Proof, path: []const storage.esp_anchor.ShortName };
 
 pub fn reservationBytes(block: u32) !u64 {
-    try s.recovery_store.validateBlockSize(block);
+    try storage.recovery_store.validateBlockSize(block);
     return try std.math.add(u64, block, std.mem.alignForward(u64, MAX_BYTES, block));
 }
-pub fn validate(a: std.mem.Allocator, target: s.model.Target, bundle: s.maintenance_session.Bundle, recovery: s.esp_anchor.Proof, anchor: Anchor) !void {
+pub fn validate(a: std.mem.Allocator, target: storage.model.Target, bundle: storage.maintenance_session.Bundle, recovery: storage.esp_anchor.Proof, anchor: Anchor) !void {
     try bundle.validate(a, target);
     const proof = anchor.proof;
     const block = bundle.bootstrap_store.block_size;
@@ -28,10 +28,10 @@ pub fn validate(a: std.mem.Allocator, target: s.model.Target, bundle: s.maintena
         for (proof.extents[0..i]) |other| if (r.overlaps(other)) return error.InvalidReceiptAnchor;
         for (recovery.extents) |other| if (r.overlaps(other)) return error.ReceiptOverlapsRecovery;
         if (r.overlaps(bundle.control)) return error.ReceiptOverlapsRecovery;
-        for ([_]s.recovery_store.CapsuleDescriptor{ bundle.bootstrap_store, bundle.apply_store, bundle.cleanup_store }) |d| {
+        for ([_]storage.recovery_store.CapsuleDescriptor{ bundle.bootstrap_store, bundle.apply_store, bundle.cleanup_store }) |d| {
             for (d.extents) |other| if (r.overlaps(other)) return error.ReceiptOverlapsRecovery;
         }
-        for ([_]s.program.Program{ bundle.bootstrap, bundle.apply, bundle.cleanup }) |p| {
+        for ([_]storage.program.Program{ bundle.bootstrap, bundle.apply, bundle.cleanup }) |p| {
             for (p.steps, 0..) |_, index| if (p.targetRange(index)) |other| if (r.overlaps(other)) return error.ReceiptOverlapsProgram;
         }
         total = try std.math.add(u64, total, r.length);
@@ -41,15 +41,15 @@ pub fn validate(a: std.mem.Allocator, target: s.model.Target, bundle: s.maintena
 
 pub const EspReceipt = struct {
     allocator: std.mem.Allocator,
-    disk: s.device.Device,
-    proof: s.esp_anchor.Proof,
+    disk: storage.device.Device,
+    proof: storage.esp_anchor.Proof,
     block: u32,
     expected: proto.ReceiptIdentity,
-    pub fn open(a: std.mem.Allocator, io: std.Io, disk: s.device.Device, anchor: Anchor, block: u32, expected: proto.ReceiptIdentity) !EspReceipt {
+    pub fn open(a: std.mem.Allocator, io: std.Io, disk: storage.device.Device, anchor: Anchor, block: u32, expected: proto.ReceiptIdentity) !EspReceipt {
         try disk.authorizeMutation();
         if (!std.mem.eql(u8, &disk.target.identity, &anchor.proof.disk_identity) or
             !std.mem.eql(u8, &try proto.hexDigest(expected.disk_identity), &disk.target.identity) or anchor.proof.bytes != try reservationBytes(block)) return error.InvalidReceiptAnchor;
-        const actual = try s.esp_anchor.revalidate(a, io, disk.reader(), anchor.path, block, anchor.proof, false);
+        const actual = try storage.esp_anchor.revalidate(a, io, disk.reader(), anchor.path, block, anchor.proof, false);
         return .{ .allocator = a, .disk = disk, .proof = actual, .block = block, .expected = expected };
     }
     pub fn sink(self: *EspReceipt) @import("session_manifest.zig").ReceiptSink {
@@ -80,7 +80,7 @@ pub const EspReceipt = struct {
         try self.transfer(io, 0, header, false);
         if (std.mem.allEqual(u8, header, 0)) return error.FileNotFound;
         if (!std.mem.eql(u8, header[0..8], "PZRCPT01") or
-            !std.mem.eql(u8, header[header.len - 32 ..], &s.model.digest(header[0 .. header.len - 32]))) return error.FileNotFound;
+            !std.mem.eql(u8, header[header.len - 32 ..], &storage.model.digest(header[0 .. header.len - 32]))) return error.FileNotFound;
         const size = std.mem.readInt(u32, header[8..12], .little);
         if (size == 0 or size > MAX_BYTES or std.mem.readInt(u32, header[12..16], .little) != self.block or
             !std.mem.eql(u8, header[16..48], &try proto.hexDigest(self.expected.id)) or
@@ -89,7 +89,7 @@ pub const EspReceipt = struct {
         const body = try a.alloc(u8, @intCast(self.proof.bytes - self.block));
         defer a.free(body);
         try self.transfer(io, self.block, body, false);
-        if (!std.mem.eql(u8, header[80..112], &s.model.digest(body[0..size])) or
+        if (!std.mem.eql(u8, header[80..112], &storage.model.digest(body[0..size])) or
             !std.mem.allEqual(u8, body[size..], 0)) return error.FileNotFound;
         _ = try proto.parseCompletion(a, body[0..size], self.expected);
         return try a.dupe(u8, body[0..size]);
@@ -119,8 +119,8 @@ pub const EspReceipt = struct {
         std.mem.writeInt(u32, header[12..16], self.block, .little);
         @memcpy(header[16..48], &try proto.hexDigest(self.expected.id));
         @memcpy(header[48..80], &self.disk.target.identity);
-        @memcpy(header[80..112], &s.model.digest(bytes));
-        @memcpy(header[header.len - 32 ..], &s.model.digest(header[0 .. header.len - 32]));
+        @memcpy(header[80..112], &storage.model.digest(bytes));
+        @memcpy(header[header.len - 32 ..], &storage.model.digest(header[0 .. header.len - 32]));
         // A durable payload precedes its checked publication header. A torn or
         // unsynced header remains unpublished, retaining the firmware binding.
         try self.transfer(io, 0, header, true);
@@ -138,14 +138,14 @@ test "ESP receipt survives every modeled persistence cut without accepting torn 
         const io = std.testing.io;
         const baseline = try a.alloc(u8, 128 * 1024);
         @memset(baseline, 0);
-        var machine = try s.testing.crash_model.Machine.init(a, .{ .identity = @splat(2), .capacity = baseline.len, .sector_size = 4096 }, baseline);
+        var machine = try storage.testing.crash_model.Machine.init(a, .{ .identity = @splat(2), .capacity = baseline.len, .sector_size = 4096 }, baseline);
         const id = "0101010101010101010101010101010101010101010101010101010101010101";
         const disk = "0202020202020202020202020202020202020202020202020202020202020202";
         const expected: proto.ReceiptIdentity = .{ .id = id, .disk_identity = disk, .plan_digest = id, .program_digest = id, .image_digest = id };
         const value: proto.wire.CompletionReceipt = .{ .version = 4, .id = id, .disk_identity = disk, .plan_digest = id, .program_digest = id, .image_digest = id, .outcome = .completed, .message = "verified" };
         const bytes = try std.json.Stringify.valueAlloc(a, value, .{});
         // Fragmentation is deliberate; no physical write may cross the gap.
-        const proof: s.esp_anchor.Proof = .{ .disk_identity = @splat(2), .esp = .{ .offset = 0, .length = baseline.len }, .bytes = try reservationBytes(4096), .metadata_digest = @splat(3), .content_digest = @splat(4), .extents = &.{ .{ .offset = 0, .length = 4096 }, .{ .offset = 32768, .length = 65536 } } };
+        const proof: storage.esp_anchor.Proof = .{ .disk_identity = @splat(2), .esp = .{ .offset = 0, .length = baseline.len }, .bytes = try reservationBytes(4096), .metadata_digest = @splat(3), .content_digest = @splat(4), .extents = &.{ .{ .offset = 0, .length = 4096 }, .{ .offset = 32768, .length = 65536 } } };
         var store: EspReceipt = .{ .allocator = a, .disk = machine.disk(), .proof = proof, .block = 4096, .expected = expected };
         if (cut != 0) machine.arm(cut, .crash);
         const port = store.sink();

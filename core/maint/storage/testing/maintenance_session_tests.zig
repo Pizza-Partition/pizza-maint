@@ -1,7 +1,7 @@
 const std = @import("std");
-const s = @import("storage");
-const ms = s.maintenance_session;
-const Machine = s.testing.crash_model.Machine;
+const storage = @import("storage");
+const ms = storage.maintenance_session;
+const Machine = storage.testing.crash_model.Machine;
 const IO = std.testing.io;
 const Fixture = struct {
     machine: *Machine,
@@ -12,7 +12,7 @@ const Fixture = struct {
         const m = try a.create(Machine);
         m.* = try Machine.init(a, .{ .identity = @splat(0x67), .capacity = bytes.len, .sector_size = sector }, bytes);
         const content = try a.alloc(u8, sector);
-        var boot = s.program.Builder.init(a, m.disk().reader());
+        var boot = storage.program.Builder.init(a, m.disk().reader());
         @memset(content, 0x11);
         try boot.write(IO, .{ .offset = 0, .length = sector }, content, false);
         // Preserve original source bytes that the future raw work-store header
@@ -22,7 +22,7 @@ const Fixture = struct {
         try boot.write(IO, .{ .offset = 524288, .length = sector }, content, false);
         const bp = try boot.finish();
         @memset(m.live[0..sector], 0x11);
-        var apply = s.program.Builder.init(a, m.disk().reader());
+        var apply = storage.program.Builder.init(a, m.disk().reader());
         @memset(content, 0x22);
         try apply.write(IO, .{ .offset = 0, .length = sector }, content, false);
         @memset(content, 0x44);
@@ -30,12 +30,12 @@ const Fixture = struct {
         const ap = try apply.finish();
         @memset(m.live[0..sector], 0x22);
         @memset(m.live[8192..][0..sector], 0x44);
-        var clean = s.program.Builder.init(a, m.disk().reader());
+        var clean = storage.program.Builder.init(a, m.disk().reader());
         @memset(content, 0x33);
         try clean.write(IO, .{ .offset = 0, .length = sector }, content, false);
         const cp = try clean.finish();
         @memset(m.live, 0);
-        const id: s.model.Digest = @splat(0x39);
+        const id: storage.model.Digest = @splat(0x39);
         return .{ .machine = m, .bundle = .{
             .session = id,
             .control = .{ .offset = 32768, .length = 8192 },
@@ -97,7 +97,7 @@ test "acceptance closes undo and cleanup reaches the exact final state" {
     wrong.session = @splat(0x98);
     try std.testing.expectError(error.SessionIdentityMismatch, ms.Session.open(a, IO, f.machine.disk(), wrong));
 }
-fn failVerify(_: *const anyopaque, _: std.Io, _: s.device.Reader) !bool {
+fn failVerify(_: *const anyopaque, _: std.Io, _: storage.device.Reader) !bool {
     return false;
 }
 test "failed cleanup restores the accepted layout and stays in maintenance" {
@@ -189,4 +189,60 @@ test "maintenance recovers every durability cut without replaying requests" {
             try std.testing.expectEqual(sequence, session.sequence);
         }
     }
+}
+
+test "preparation resumes every torn control and capsule initialization without erasing an existing transaction" {
+    var measure: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer measure.deinit();
+    const initial = try Fixture.init(measure.allocator(), 4096);
+    initial.machine.arm(null, .crash);
+    _ = try initial.prepare(measure.allocator());
+    const count = initial.machine.events;
+    for (1..count + 1) |cut| {
+        var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const f = try Fixture.init(a, 4096);
+        f.machine.arm(cut, .crash);
+        _ = f.prepare(a) catch |err| blk: {
+            if (err != error.SimulatedPowerLoss) return err;
+            break :blk null;
+        };
+        try f.machine.powerLoss(cut, switch (cut % 4) {
+            0 => .drop,
+            1 => .tear,
+            2 => .garbage,
+            else => .reorder,
+        });
+        var resumed = f.reopen(a) catch |err| blk: {
+            if (err != error.InvalidSessionHeaders) return err;
+            break :blk try f.prepare(a);
+        };
+        try resumed.recover(IO);
+        try std.testing.expectEqual(.prepared, resumed.phase);
+        try std.testing.expect(std.mem.allEqual(u8, f.machine.live[0..32768], 0));
+        try resumed.bootstrap(IO, null, null);
+        try resumed.apply(IO, null, null);
+        try std.testing.expectEqual(.verified, resumed.phase);
+        // Neither header being valid is never permission to erase existing logs.
+        @memset(f.machine.live[32768..40960], 0xa5);
+        try std.testing.expectError(error.InvalidSessionHeaders, f.prepare(a));
+    }
+}
+
+test "failed cleanup retries only the cleanup transaction" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const f = try Fixture.init(a, 4096);
+    var session = try f.prepare(a);
+    try session.bootstrap(IO, null, null);
+    try session.apply(IO, null, null);
+    try session.accept(IO);
+    var unused: u8 = 0;
+    try std.testing.expectError(error.ProgramVerificationFailed, session.cleanup(IO, .{ .context = &unused, .check = failVerify }, null));
+    try session.recover(IO);
+    try std.testing.expectEqual(.failed_cleanup, session.phase);
+    try session.cleanup(IO, null, null);
+    try std.testing.expectEqual(.completed, session.phase);
 }

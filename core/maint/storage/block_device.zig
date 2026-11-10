@@ -5,6 +5,14 @@ const model = @import("model.zig");
 const device = @import("device.zig");
 const fs = @import("utils").filesystem;
 
+// Linux x86-64 block-device and Btrfs ioctl request codes.
+const BLKGETSIZE64: u32 = 0x80081272;
+const BLKSSZGET: u32 = 0x1268;
+const BLKPBSZGET: u32 = 0x127b;
+const BLKROGET: u32 = 0x125e;
+const BLKRRPART: u32 = 0x125f;
+const BTRFS_IOC_FS_INFO: u32 = 0x8400941f;
+
 fn rangeWithin(r: model.Range, allowed: []const model.Range) bool {
     const end = r.end() catch return false;
     if (r.length == 0) return false;
@@ -242,10 +250,10 @@ fn ioctl(fd: linux.fd_t, request: u32, value: anytype) !void {
 const Geometry = struct { bytes: u64, logical: u32, physical: u32, readonly: c_int };
 fn geometry(fd: linux.fd_t) !Geometry {
     var result: Geometry = undefined;
-    try ioctl(fd, 0x80081272, &result.bytes); // BLKGETSIZE64
-    try ioctl(fd, 0x1268, &result.logical); // BLKSSZGET
-    try ioctl(fd, 0x127b, &result.physical); // BLKPBSZGET
-    try ioctl(fd, 0x125e, &result.readonly); // BLKROGET
+    try ioctl(fd, BLKGETSIZE64, &result.bytes);
+    try ioctl(fd, BLKSSZGET, &result.logical);
+    try ioctl(fd, BLKPBSZGET, &result.physical);
+    try ioctl(fd, BLKROGET, &result.readonly);
     return result;
 }
 
@@ -255,17 +263,17 @@ fn btrfsInfo(io: std.Io, dir: std.Io.Dir) ![1024]u8 {
     var readable = try dir.openDir(io, ".", .{ .iterate = true });
     defer readable.close(io);
     var info: [1024]u8 align(8) = @splat(0);
-    ioctl(readable.handle, 0x8400941f, &info) catch return error.RecoveryFilesystemInfoUnavailable; // BTRFS_IOC_FS_INFO
+    ioctl(readable.handle, BTRFS_IOC_FS_INFO, &info) catch return error.RecoveryFilesystemInfoUnavailable;
     if (std.mem.readInt(u64, info[8..16], .little) != 1) return error.ComplexRecoveryDeviceUnsupported;
     return info;
 }
 fn recoveryNode(a: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !Node {
     const kind = try fs.filesystemType(dir);
-    if (kind == 0xef53 or kind == 0x58465342) {
+    if (kind == fs.EXT4_SUPER_MAGIC or kind == fs.XFS_SUPER_MAGIC) {
         const value = try stat(dir.handle);
         return .{ .major = value.dev_major, .minor = value.dev_minor };
     }
-    if (kind != 0x9123683e) return error.RecoveryMustUsePersistentMedia;
+    if (kind != fs.BTRFS_SUPER_MAGIC) return error.RecoveryMustUsePersistentMedia;
     const info = try btrfsInfo(io, dir);
     const uuid = std.fmt.bytesToHex(info[16..32].*, .lower);
     const path = try a.print("/sys/fs/btrfs/{s}-{s}-{s}-{s}-{s}/devices", .{ uuid[0..8], uuid[8..12], uuid[12..16], uuid[16..20], uuid[20..32] });
@@ -346,8 +354,15 @@ pub const BlockDevice = struct {
         try unused(a, io, self.evidence);
         if (bundle.bootstrap_store.block_size < self.evidence.physical) return error.RecoveryBlockTooSmall;
         const reader = self.backend().reader();
-        const actual = try @import("esp_anchor.zig").revalidate(a, io, reader, path, bundle.bootstrap_store.block_size, proof, initial);
+        const actual = try @import("esp_anchor.zig").revalidate(a, io, reader, path, bundle.bootstrap_store.block_size, proof, false);
         if (initial) {
+            // A torn first session header changes reserved ESP bytes but cannot
+            // change any planned target byte. Require the complete initial read
+            // guards before allowing preparation to resume; prepare() also
+            // refuses any existing capsule header.
+            for (bundle.bootstrap.guards) |guard| {
+                if (!std.mem.eql(u8, &try reader.digest(io, guard.range), &guard.expected)) return error.PlanningReadChanged;
+            }
             const table = try @import("partition_table.zig").BUILTIN.readLayout(a, io, reader);
             if (table.kind != .gpt) return error.GptRequiredForSameDiskRecovery;
             const esp_type = [_]u8{ 0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b };
@@ -407,10 +422,10 @@ pub const BlockDevice = struct {
     }
     pub fn refreshLayout(self: *BlockDevice) !void {
         if (self.evidence.partition) return;
-        if (linux.errno(linux.ioctl(self.file.handle, 0x125f, 0)) != .SUCCESS) return error.KernelPartitionRefreshFailed;
+        if (linux.errno(linux.ioctl(self.file.handle, BLKRRPART, 0)) != .SUCCESS) return error.KernelPartitionRefreshFailed;
     }
     pub fn backend(self: *BlockDevice) device.Device {
-        return .{ .context = self, .target = self.target, .physical_write_authorized = self.mode == .write and (self.recovery_directory != null or self.session_digest != null or self.preparation_digest != null), .region = .{ .identity = self.evidence.disk_identity, .range = .{ .offset = self.evidence.offset, .length = self.target.capacity } }, .vtable = &OPS };
+        return .{ .context = self, .target = self.target, .write_granule = self.evidence.physical, .physical_write_authorized = self.mode == .write and (self.recovery_directory != null or self.session_digest != null or self.preparation_digest != null), .region = .{ .identity = self.evidence.disk_identity, .range = .{ .offset = self.evidence.offset, .length = self.target.capacity } }, .vtable = &OPS };
     }
     fn cast(ctx: *const anyopaque) *const BlockDevice {
         return @ptrCast(@alignCast(ctx));
@@ -431,7 +446,7 @@ pub const BlockDevice = struct {
         if (!std.mem.eql(u8, &live.identity, &target.identity) or !std.mem.eql(u8, live.root_path, self.evidence.root_path)) return error.DeviceIdentityChanged;
         if (self.recovery_directory) |dir| {
             if (!std.meta.eql(self.recovery_fsid.?, try fs.filesystemIdentity(.{ .handle = dir.handle, .flags = .{ .nonblocking = false } }))) return error.RecoveryBackingChanged;
-            if (try fs.filesystemType(dir) == 0x9123683e) _ = try btrfsInfo(io, dir);
+            if (try fs.filesystemType(dir) == fs.BTRFS_SUPER_MAGIC) _ = try btrfsInfo(io, dir);
         }
     }
     fn read(ctx: *const anyopaque, io: std.Io, offset: u64, bytes: []u8) !void {

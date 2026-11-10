@@ -2,19 +2,19 @@
 //! This provides integrity relative to firmware state, not authentication against
 //! another privileged OS or replacement for Secure Boot image verification.
 const std = @import("std");
-const s = @import("storage");
+const storage = @import("storage");
 const uefi = @import("uefi.zig");
 pub const ENCODED_SIZE = 144;
-pub const MAX_PAYLOAD_BYTES = 4 * 1024 * 1024 + 3 * s.program.MAX_ENCODED_BYTES + 24;
+pub const MAX_PAYLOAD_BYTES = 4 * 1024 * 1024 + 3 * storage.program.MAX_ENCODED_BYTES + 24;
 pub const Binding = struct {
-    session: s.model.Digest,
-    payload_digest: s.model.Digest,
+    session: storage.model.Digest,
+    payload_digest: storage.model.Digest,
     payload_bytes: u64,
-    disk_identity: s.model.Digest,
-    image_digest: s.model.Digest,
+    disk_identity: storage.model.Digest,
+    image_digest: storage.model.Digest,
 
-    pub fn init(session: s.model.Digest, disk_identity: s.model.Digest, image_digest: s.model.Digest, payload: []const u8) !Binding {
-        const result: Binding = .{ .session = session, .disk_identity = disk_identity, .image_digest = image_digest, .payload_digest = s.model.digest(payload), .payload_bytes = payload.len };
+    pub fn init(session: storage.model.Digest, disk_identity: storage.model.Digest, image_digest: storage.model.Digest, payload: []const u8) !Binding {
+        const result: Binding = .{ .session = session, .disk_identity = disk_identity, .image_digest = image_digest, .payload_digest = storage.model.digest(payload), .payload_bytes = payload.len };
         try result.validate();
         return result;
     }
@@ -41,9 +41,9 @@ pub const Binding = struct {
     pub fn read(a: std.mem.Allocator, io: std.Io, vars: uefi.Variables) !Binding {
         return decode(try vars.get(a, io, .pizza_session) orelse return error.MissingBootBinding);
     }
-    pub fn check(self: Binding, payload: []const u8, trusted_image_digest: s.model.Digest) !void {
+    pub fn check(self: Binding, payload: []const u8, trusted_image_digest: storage.model.Digest) !void {
         try self.validate();
-        if (payload.len != self.payload_bytes or !std.mem.eql(u8, &self.payload_digest, &s.model.digest(payload))) return error.SessionManifestChanged;
+        if (payload.len != self.payload_bytes or !std.mem.eql(u8, &self.payload_digest, &storage.model.digest(payload))) return error.SessionManifestChanged;
         if (!std.mem.eql(u8, &self.image_digest, &trusted_image_digest)) return error.MaintenanceImageChanged;
     }
     /// Caller has already synced/read back all manifest bytes, boot image and
@@ -65,7 +65,7 @@ pub const Binding = struct {
     }
     /// Clear only after durable terminal status AND boot restoration. The next
     /// call can finish a restore interrupted between any firmware operations.
-    pub fn finish(self: Binding, a: std.mem.Allocator, io: std.Io, vars: uefi.Variables, lease: uefi.Lease, session: s.maintenance_session.Session) !void {
+    pub fn finish(self: Binding, a: std.mem.Allocator, io: std.Io, vars: uefi.Variables, lease: uefi.Lease, session: storage.maintenance_session.Session) !void {
         if (!std.mem.eql(u8, &self.session, &session.bundle.session) or !std.mem.eql(u8, &self.disk_identity, &session.disk.target.identity)) return error.SessionIdentityMismatch;
         // Missing binding is only an idempotent finish after restored boot.
         if (try vars.get(a, io, .pizza_session)) |_| try self.require(a, io, vars);

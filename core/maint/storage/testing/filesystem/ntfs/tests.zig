@@ -2,7 +2,7 @@
 const std = @import("std");
 const storage = @import("storage");
 const ntfs = storage.ntfs;
-const f = ntfs.format;
+const format = ntfs.format;
 const REGISTRY = storage.filesystem.BUILTIN;
 const Image = storage.testing.Image;
 const IDENTITY = storage.testing.fixture.IDENTITY;
@@ -129,7 +129,7 @@ test "NTFS allocated MFT corruption is refused and C device writes cannot bypass
     var image = try Image.open(io, path, IDENTITY, 512);
     defer image.close(io);
     const before = try tools.digest(io, image.reader());
-    const g = try f.load(io, image.reader());
+    const g = try format.load(io, image.reader());
     var offset: u64 = 0;
     {
         const s = try ntfs.Session.open(a, io, image.reader(), null);
@@ -137,12 +137,12 @@ test "NTFS allocated MFT corruption is refused and C device writes cannot bypass
         const ni = ntfs_pathname_to_inode(s.volume.?, null, "/payload");
         if (ni == null) return error.MissingTestFile;
         const logical = ni.*.mft_no * g.record;
-        const lcn = ntfs.c.ntfs_attr_vcn_to_lcn(s.volume.?.mft_na, @intCast(logical / g.cluster));
+        const lcn = ntfs.c_api.ntfs_attr_vcn_to_lcn(s.volume.?.mft_na, @intCast(logical / g.cluster));
         try std.testing.expect(lcn >= 0);
         offset = @as(u64, @intCast(lcn)) * g.cluster + logical % g.cluster;
-        try s.check(ntfs.c.ntfs_inode_close(ni));
+        try s.check(ntfs.c_api.ntfs_inode_close(ni));
         const bytes: [512]u8 = @splat(0);
-        const result = ntfs.c.ntfs_pwrite(s.volume.?.unnamed_0.dev, 0, bytes.len, &bytes);
+        const result = ntfs.c_api.ntfs_pwrite(s.volume.?.unnamed_0.dev, 0, bytes.len, &bytes);
         try std.testing.expectError(error.NtfsWriteDenied, s.check(if (result < 0) -1 else 0));
     }
     try std.testing.expectEqualSlices(u8, &before, &try tools.digest(io, image.reader()));
@@ -156,7 +156,7 @@ test "NTFS allocated MFT corruption is refused and C device writes cannot bypass
     try std.testing.expectEqualSlices(u8, &corrupt, &try tools.digest(io, image.reader()));
 }
 
-extern "c" fn ntfs_pathname_to_inode([*c]ntfs.c.ntfs_volume, [*c]ntfs.c.ntfs_inode, [*c]const u8) [*c]ntfs.c.ntfs_inode;
+extern "c" fn ntfs_pathname_to_inode([*c]ntfs.c_api.ntfs_volume, [*c]ntfs.c_api.ntfs_inode, [*c]const u8) [*c]ntfs.c_api.ntfs_inode;
 
 test "NTFS preserves device errors and discards failed C planning sessions" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
@@ -169,7 +169,7 @@ test "NTFS preserves device errors and discards failed C planning sessions" {
     var image = try Image.open(io, path, IDENTITY, 512);
     defer image.close(io);
     const before = try tools.digest(io, image.reader());
-    const g = try f.load(io, image.reader());
+    const g = try format.load(io, image.reader());
     const Broken = struct {
         source: storage.device.Reader,
         offset: u64,
@@ -193,4 +193,22 @@ test "NTFS preserves device errors and discards failed C planning sessions" {
     // volume rather than retain a pointer into the previous session's arena.
     _ = try suite.run(a, io, &image, root, "create-after-error", .{ .kind = .create, .filesystem = .ntfs });
     try std.testing.expect((try REGISTRY.check(a, io, image.reader())).consistent);
+}
+
+test "native NTFS format on 4Kn media uses 512-byte update-sequence protection" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+    const root = try temporary(a, io);
+    defer std.Io.Dir.cwd().deleteTree(io, root) catch {};
+    const path = try std.fs.path.join(a, &.{ root, "target.raw" });
+    const file = try std.Io.Dir.cwd().createFile(io, path, .{});
+    try file.setLength(io, 64 * 1024 * 1024);
+    file.close(io);
+    var image = try Image.open(io, path, IDENTITY, 4096);
+    defer image.close(io);
+    _ = try suite.run(a, io, &image, root, "create-4kn", .{ .kind = .create, .filesystem = .ntfs });
+    try tools.command(a, io, &.{ "ntfsfix", "-n", path });
+    try tools.command(a, io, &.{ "ntfsresize", "--info", "--force", path });
 }

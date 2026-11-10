@@ -19,14 +19,14 @@ test {
 }
 
 test "three-phase compiler creates a tail partition then returns the exact approved GPT" {
-    const s = @import("storage");
+    const storage = @import("storage");
     const proto = @import("proto");
-    const w = proto.wire;
+    const wire = proto.wire;
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     const io = std.testing.io;
-    const bytes = try s.testing.gpt_fixture.initial(a, 4096);
+    const bytes = try storage.testing.gpt_fixture.initial(a, 4096);
     // Enlarge the retained ESP placeholder so both fixed recovery capsules fit.
     for ([_]usize{ 2, 510 }) |at| std.mem.writeInt(u64, bytes[at * 4096 + 40 ..][0..8], 319, .little);
     for ([_]usize{ 1, 511 }) |at| {
@@ -36,16 +36,16 @@ test "three-phase compiler creates a tail partition then returns the exact appro
         std.mem.writeInt(u32, header[16..20], 0, .little);
         std.mem.writeInt(u32, header[16..20], std.hash.Crc32.hash(header[0..92]), .little);
     }
-    var m = try s.testing.crash_model.Machine.init(a, .{ .identity = @splat(0x71), .capacity = bytes.len, .sector_size = 4096 }, bytes);
-    const baseline = try s.partition_table.BUILTIN.readLayout(a, io, m.disk().reader());
+    var m = try storage.testing.crash_model.Machine.init(a, .{ .identity = @splat(0x71), .capacity = bytes.len, .sector_size = 4096 }, bytes);
+    const baseline = try storage.partition_table.BUILTIN.readLayout(a, io, m.disk().reader());
     const esp = baseline.entries[0];
     const disk_id = try a.dupe(u8, &std.fmt.bytesToHex(m.target.identity, .lower));
     const part_id = try a.dupe(u8, &std.fmt.bytesToHex(esp.id, .lower));
-    const partitions = [_]w.HostPartition{.{ .id = part_id, .offset = try a.print("{d}", .{esp.range.offset}), .length = try a.print("{d}", .{esp.range.length}), .name = "ESP", .encryption = .none, .protected = true, .attributes = try a.print("{d}", .{esp.attributes}) }};
-    const disks = [_]w.HostDisk{.{ .path = "/dev/fixture", .identity = disk_id, .capacity = try a.print("{d}", .{bytes.len}), .sector_size = 4096, .model = "fixture", .read_only = false, .partition_table = "gpt", .usable_offset = try a.print("{d}", .{baseline.usable.offset}), .usable_length = try a.print("{d}", .{baseline.usable.length}), .partitions = &partitions }};
-    const inventory: w.InventorySnapshot = .{ .version = 4, .snapshot_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", .platform = .linux, .disks = &disks };
-    const draft: w.PlanDraft = .{ .version = 4, .snapshot_id = inventory.snapshot_id, .disk_identity = disk_id, .layout = &.{.{ .id = part_id, .offset = partitions[0].offset, .length = partitions[0].length, .name = "ESP", .retain_data = true, .attributes = partitions[0].attributes.? }} };
-    const session_id: s.model.Digest = @splat(0x93);
+    const partitions = [_]wire.HostPartition{.{ .id = part_id, .offset = try a.print("{d}", .{esp.range.offset}), .length = try a.print("{d}", .{esp.range.length}), .name = "ESP", .encryption = .none, .protected = true, .attributes = try a.print("{d}", .{esp.attributes}) }};
+    const disks = [_]wire.HostDisk{.{ .path = "/dev/fixture", .identity = disk_id, .capacity = try a.print("{d}", .{bytes.len}), .sector_size = 4096, .model = "fixture", .read_only = false, .partition_table = "gpt", .usable_offset = try a.print("{d}", .{baseline.usable.offset}), .usable_length = try a.print("{d}", .{baseline.usable.length}), .partitions = &partitions }};
+    const inventory: wire.InventorySnapshot = .{ .version = 4, .snapshot_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", .platform = .linux, .disks = &disks };
+    const draft: wire.PlanDraft = .{ .version = 4, .snapshot_id = inventory.snapshot_id, .disk_identity = disk_id, .layout = &.{.{ .id = part_id, .offset = partitions[0].offset, .length = partitions[0].length, .name = "ESP", .retain_data = true, .attributes = partitions[0].attributes.? }} };
+    const session_id: storage.model.Digest = @splat(0x93);
     const resources: @import("maintenance_compiler.zig").Resources = .{
         .session = session_id,
         .maintenance_uuid = @splat(0x48),
@@ -58,17 +58,17 @@ test "three-phase compiler creates a tail partition then returns the exact appro
     // Repeat-use residue must be initialized transactionally before format.
     for (0..2) |i| @memcpy(m.live[resources.tail.offset + i * 4096 ..][0..8], "PZCAP001");
     const compiled = try @import("maintenance_compiler.zig").compile(a, io, m.disk().reader(), inventory, draft, resources);
-    const anchor: s.esp_anchor.Proof = .{ .disk_identity = m.target.identity, .esp = esp.range, .extents = &.{esp.range}, .bytes = esp.range.length, .metadata_digest = @splat(1), .content_digest = @splat(2) };
-    try s.block_device.validateSessionAnchor(a, m.target, compiled.bundle, anchor);
+    const anchor: storage.esp_anchor.Proof = .{ .disk_identity = m.target.identity, .esp = esp.range, .extents = &.{esp.range}, .bytes = esp.range.length, .metadata_digest = @splat(1), .content_digest = @splat(2) };
+    try storage.block_device.validateSessionAnchor(a, m.target, compiled.bundle, anchor);
     var wrong_anchor = anchor;
     wrong_anchor.disk_identity = @splat(9);
-    try std.testing.expectError(error.RecoveryBackingChanged, s.block_device.validateSessionAnchor(a, m.target, compiled.bundle, wrong_anchor));
+    try std.testing.expectError(error.RecoveryBackingChanged, storage.block_device.validateSessionAnchor(a, m.target, compiled.bundle, wrong_anchor));
     wrong_anchor = anchor;
     wrong_anchor.extents = &.{resources.control};
-    try std.testing.expectError(error.RecoveryCapsuleOutsideAnchor, s.block_device.validateSessionAnchor(a, m.target, compiled.bundle, wrong_anchor));
+    try std.testing.expectError(error.RecoveryCapsuleOutsideAnchor, storage.block_device.validateSessionAnchor(a, m.target, compiled.bundle, wrong_anchor));
     var unprotected = compiled.bundle;
     unprotected.protected = &.{};
-    try std.testing.expectError(error.EspNotProtected, s.block_device.validateSessionAnchor(a, m.target, unprotected, anchor));
+    try std.testing.expectError(error.EspNotProtected, storage.block_device.validateSessionAnchor(a, m.target, unprotected, anchor));
     const uefi = @import("uefi.zig");
     var firmware: uefi.MemoryVariables = .{ .a = a };
     const lease = try uefi.Lease.capture(a, io, firmware.vars(), 0x5049, try uefi.loadOption(a, 1, esp.range.offset / 4096, esp.range.length / 4096, esp.uuid, "\\EFI\\Pizza\\session.efi"));
@@ -85,9 +85,9 @@ test "three-phase compiler creates a tail partition then returns the exact appro
     try std.testing.expectError(error.MaintenanceImageChanged, manifest.load(a, io, firmware.vars(), sealed.bytes, @splat(9)));
     try std.testing.expectError(error.SessionManifestChanged, manifest.load(a, io, firmware.vars(), sealed.bytes[0 .. sealed.bytes.len - 1], @splat(0x49)));
     try std.testing.expectEqualSlices(u8, &compiled.bundle.digest(), &loaded.compiled.bundle.digest());
-    var session = try s.maintenance_session.Session.prepare(a, io, m.disk(), compiled.bundle);
+    var session = try storage.maintenance_session.Session.prepare(a, io, m.disk(), compiled.bundle);
     try session.bootstrap(io, compiled.verifier(.bootstrap), null);
-    try std.testing.expectEqual(2, (try s.partition_table.BUILTIN.readLayout(a, io, m.disk().reader())).entries.len);
+    try std.testing.expectEqual(2, (try storage.partition_table.BUILTIN.readLayout(a, io, m.disk().reader())).entries.len);
     try session.apply(io, compiled.verifier(.apply), null);
     try std.testing.expectError(error.MaintenanceStillOwnsBoot, loaded.finish(a, io, firmware.vars(), session, receipts.sink()));
     try sealed.binding.require(a, io, firmware.vars());
@@ -135,7 +135,7 @@ test "three-phase compiler creates a tail partition then returns the exact appro
 
 test "approved GPT deletion compiles through native storage and remains reversible" {
     const storage = @import("storage");
-    const w = @import("proto").wire;
+    const wire = @import("proto").wire;
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -146,10 +146,10 @@ test "approved GPT deletion compiles through native storage and remains reversib
     const entry = layout.entries[0];
     const disk_id = try a.dupe(u8, &std.fmt.bytesToHex(m.target.identity, .lower));
     const partition_id = try a.dupe(u8, &std.fmt.bytesToHex(entry.id, .lower));
-    const partitions = [_]w.HostPartition{.{ .id = partition_id, .offset = try a.print("{d}", .{entry.range.offset}), .length = try a.print("{d}", .{entry.range.length}), .name = "Data", .encryption = .none, .attributes = try a.print("{d}", .{entry.attributes}) }};
-    const disks = [_]w.HostDisk{.{ .path = "/dev/test", .identity = disk_id, .capacity = try a.print("{d}", .{bytes.len}), .sector_size = 512, .model = "fixture", .read_only = false, .partition_table = "gpt", .usable_offset = try a.print("{d}", .{layout.usable.offset}), .usable_length = try a.print("{d}", .{layout.usable.length}), .partitions = &partitions }};
-    const inventory: w.InventorySnapshot = .{ .version = 4, .snapshot_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", .platform = .linux, .disks = &disks };
-    const draft: w.PlanDraft = .{ .version = 4, .snapshot_id = inventory.snapshot_id, .disk_identity = disk_id, .intents = &.{.{ .kind = .delete, .partition_id = partition_id }} };
+    const partitions = [_]wire.HostPartition{.{ .id = partition_id, .offset = try a.print("{d}", .{entry.range.offset}), .length = try a.print("{d}", .{entry.range.length}), .name = "Data", .encryption = .none, .attributes = try a.print("{d}", .{entry.attributes}) }};
+    const disks = [_]wire.HostDisk{.{ .path = "/dev/test", .identity = disk_id, .capacity = try a.print("{d}", .{bytes.len}), .sector_size = 512, .model = "fixture", .read_only = false, .partition_table = "gpt", .usable_offset = try a.print("{d}", .{layout.usable.offset}), .usable_length = try a.print("{d}", .{layout.usable.length}), .partitions = &partitions }};
+    const inventory: wire.InventorySnapshot = .{ .version = 4, .snapshot_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", .platform = .linux, .disks = &disks };
+    const draft: wire.PlanDraft = .{ .version = 4, .snapshot_id = inventory.snapshot_id, .disk_identity = disk_id, .intents = &.{.{ .kind = .delete, .partition_id = partition_id }} };
     const compiled = try @import("compiler.zig").compileOffline(a, io, m.disk().reader(), inventory, draft);
     try storage.program_executor.executeDeferred(a, io, m.disk(), m.store(), compiled.program, &.{}, null, null);
     try std.testing.expect(try compiled.verify(a, io, m.disk().reader()));
@@ -183,18 +183,18 @@ const TestReceipts = struct {
 };
 
 test "NTFS create preserves approved Unicode volume labels and detects mismatches" {
-    const s = @import("storage");
+    const storage = @import("storage");
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     const bytes = try a.alloc(u8, 32 * 1024 * 1024);
     @memset(bytes, 0);
-    var machine = try s.testing.crash_model.Machine.init(a, .{ .identity = @splat(0x51), .capacity = bytes.len, .sector_size = 512 }, bytes);
-    const range: s.model.Range = .{ .offset = 0, .length = bytes.len };
-    const driver = try s.filesystem.BUILTIN.get(.ntfs);
-    const intent: s.semantic.Intent = .{ .operation = .create, .bytes = bytes.len, .label = "Pizza中文😀" };
-    const plan = try s.service.filesystem(a, std.testing.io, machine.disk().reader(), range, driver, intent);
-    var preview = try s.program.Preview.init(machine.disk().reader(), plan.program);
+    var machine = try storage.testing.crash_model.Machine.init(a, .{ .identity = @splat(0x51), .capacity = bytes.len, .sector_size = 512 }, bytes);
+    const range: storage.model.Range = .{ .offset = 0, .length = bytes.len };
+    const driver = try storage.filesystem.BUILTIN.get(.ntfs);
+    const intent: storage.semantic.Intent = .{ .operation = .create, .bytes = bytes.len, .label = "Pizza中文😀" };
+    const plan = try storage.service.filesystem(a, std.testing.io, machine.disk().reader(), range, driver, intent);
+    var preview = try storage.program.Preview.init(machine.disk().reader(), plan.program);
     try std.testing.expect(try plan.verify(a, std.testing.io, preview.reader()));
     const fs = try driver.open(a, std.testing.io, preview.reader(), false);
     defer fs.close();
@@ -202,7 +202,7 @@ test "NTFS create preserves approved Unicode volume labels and detects mismatche
     wrong.label = "different";
     try std.testing.expect(!(try fs.verify(wrong, preview.reader())).consistent);
     wrong.label = "invalid/name";
-    try std.testing.expectError(error.NtfsInvalidVolumeLabel, s.service.filesystem(a, std.testing.io, machine.disk().reader(), range, driver, wrong));
+    try std.testing.expectError(error.NtfsInvalidVolumeLabel, storage.service.filesystem(a, std.testing.io, machine.disk().reader(), range, driver, wrong));
     wrong.label = "123456789012345678901234567890123";
-    try std.testing.expectError(error.NtfsInvalidVolumeLabel, s.service.filesystem(a, std.testing.io, machine.disk().reader(), range, driver, wrong));
+    try std.testing.expectError(error.NtfsInvalidVolumeLabel, storage.service.filesystem(a, std.testing.io, machine.disk().reader(), range, driver, wrong));
 }

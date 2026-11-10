@@ -120,6 +120,19 @@ pub const Builder = struct {
     pub fn write(self: *Builder, io: std.Io, range: model.Range, bytes: []const u8, discard: bool) !void {
         try range.validate(self.reader.target.capacity, self.reader.target.sector_size);
         if (range.length != bytes.len) return error.WriteLengthMismatch;
+        const granule = @max(self.reader.target.sector_size, self.reader.write_granule);
+        if (range.offset % granule != 0 or range.length % granule != 0) {
+            const start = range.offset / granule * granule;
+            const end = std.mem.alignForward(u64, try range.end(), granule);
+            if (end > self.reader.target.capacity) return error.UnalignedPhysicalWrite;
+            const padded: model.Range = .{ .offset = start, .length = end - start };
+            const content = try self.allocator.alloc(u8, @intCast(padded.length));
+            defer self.allocator.free(content);
+            try self.readVersion(io, self.currentVersion(), padded, content);
+            @memcpy(content[@intCast(range.offset - start)..][0..bytes.len], bytes);
+            // Neighbors sharing the physical sector always require before-images.
+            return self.write(io, padded, content, false);
+        }
         try self.guard(io, range);
         _ = try self.append(.{ .write = .{ .range = range, .content = try self.allocator.dupe(u8, bytes), .discard = discard } });
     }

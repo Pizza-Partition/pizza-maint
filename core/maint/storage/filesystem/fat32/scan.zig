@@ -2,13 +2,13 @@
 //! through Reader. Orphan chains are retained for a separate salvage plan.
 const std = @import("std");
 const Reader = @import("../../device.zig").Reader;
-const f = @import("format.zig");
-const c = @import("fatfs_c");
+const format = @import("format.zig");
+const fatfs = @import("fatfs_c");
 pub const Object = struct { start: u32, chain: []u32, bytes: u64, directory: bool, parent: u32, relocated: []u32 = &.{} };
 pub const Reference = struct { directory: usize, position: usize, cluster: u32 };
 pub const Graph = struct {
     allocator: std.mem.Allocator,
-    geometry: f.Geometry,
+    geometry: format.Geometry,
     fat: []u8,
     owners: []u32,
     objects: std.ArrayList(Object) = .empty,
@@ -18,11 +18,11 @@ pub const Graph = struct {
     orphans: u32 = 0,
     directory_bytes: u64 = 0,
     pub fn value(self: Graph, cluster: u32) u32 {
-        return f.get32(self.fat, @as(usize, cluster) * 4) & f.MASK;
+        return format.get32(self.fat, @as(usize, cluster) * 4) & format.MASK;
     }
     pub fn set(self: *Graph, cluster: u32, value_: u32) void {
         const at = @as(usize, cluster) * 4;
-        f.put32(self.fat, at, (f.get32(self.fat, at) & ~f.MASK) | value_);
+        format.put32(self.fat, at, (format.get32(self.fat, at) & ~format.MASK) | value_);
     }
     fn claim(self: *Graph, start: u32, bytes: u64, directory: bool, parent: u32) !usize {
         if (self.objects.items.len >= 1024 * 1024) return error.FatResourceLimit;
@@ -35,8 +35,8 @@ pub const Graph = struct {
             self.owners[cluster] = @intCast(index + 1);
             try chain.append(self.allocator, cluster);
             const next = self.value(cluster);
-            if (f.terminal(next)) break;
-            if (next == 0 or next == f.BAD) return error.FatBrokenChain;
+            if (format.terminal(next)) break;
+            if (next == 0 or next == format.BAD) return error.FatBrokenChain;
             cluster = next;
         }
         const length = @as(u64, chain.items.len) * self.geometry.clusterBytes();
@@ -57,7 +57,7 @@ const LongName = struct {
     units: [260]u16 = @splat(0xffff),
     fn piece(self: *LongName, entry: []const u8) !void {
         const ordinal = entry[0] & 31;
-        if (ordinal == 0 or ordinal > 20 or entry[0] & 0xa0 != 0 or entry[12] != 0 or f.get16(entry, 26) != 0) return error.FatInvalidLongName;
+        if (ordinal == 0 or ordinal > 20 or entry[0] & 0xa0 != 0 or entry[12] != 0 or format.get16(entry, 26) != 0) return error.FatInvalidLongName;
         if (entry[0] & 0x40 != 0) {
             if (self.total != 0) return error.FatInvalidLongName;
             self.total = ordinal;
@@ -67,7 +67,7 @@ const LongName = struct {
         }
         if (self.expected != ordinal or self.checksum != entry[13]) return error.FatInvalidLongName;
         const offsets = [_]usize{ 1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30 };
-        for (offsets, 0..) |at, index| self.units[(@as(usize, ordinal) - 1) * 13 + index] = f.get16(entry, at);
+        for (offsets, 0..) |at, index| self.units[(@as(usize, ordinal) - 1) * 13 + index] = format.get16(entry, at);
         self.expected -= 1;
     }
     fn finish(self: *LongName, a: std.mem.Allocator, short: []const u8) !?[]const u8 {
@@ -101,7 +101,7 @@ const LongName = struct {
                 scalar = 0x10000 + (@as(u32, unit - 0xd800) << 10) + low - 0xdc00;
                 length += 1;
             } else if (unit >= 0xdc00 and unit <= 0xdfff) return error.FatInvalidLongName;
-            scalar = c.ff_wtoupper(scalar);
+            scalar = fatfs.ff_wtoupper(scalar);
             try name.appendSlice(a, std.mem.asBytes(&scalar));
         }
         if (length == 0 or length > 255) return error.FatInvalidLongName;
@@ -120,7 +120,7 @@ fn shortName(entry: []const u8) ![11]u8 {
     return result;
 }
 
-pub fn scan(a: std.mem.Allocator, io: std.Io, reader: Reader, geometry: f.Geometry, fat: []u8) !Graph {
+pub fn scan(a: std.mem.Allocator, io: std.Io, reader: Reader, geometry: format.Geometry, fat: []u8) !Graph {
     try geometry.budget();
     if (fat.len != geometry.fatBytes()) return error.FatInvalidGeometry;
     var graph: Graph = .{ .allocator = a, .geometry = geometry, .fat = fat, .owners = try a.alloc(u32, @as(usize, geometry.clusters) + 2) };
@@ -131,7 +131,7 @@ pub fn scan(a: std.mem.Allocator, io: std.Io, reader: Reader, geometry: f.Geomet
         if (value == 0) {
             graph.free += 1;
             if (graph.next_free == 0xffffffff) graph.next_free = @intCast(index);
-        } else if (!f.terminal(value) and value != f.BAD and (value < 2 or value >= geometry.clusters + 2)) return error.FatInvalidLink;
+        } else if (!format.terminal(value) and value != format.BAD and (value < 2 or value >= geometry.clusters + 2)) return error.FatInvalidLink;
     }
     _ = try graph.claim(geometry.root, 0, true, 0);
     const buffer = try a.alloc(u8, geometry.clusterBytes());
@@ -172,8 +172,8 @@ pub fn scan(a: std.mem.Allocator, io: std.Io, reader: Reader, geometry: f.Geomet
                 if (long_name) |name| {
                     if ((try names.getOrPut(name)).found_existing) return error.FatDuplicateName;
                 }
-                const first = f.first(entry);
-                const size = f.get32(entry, 28);
+                const first = format.first(entry);
+                const size = format.get32(entry, 28);
                 const directory = attr & 0x10 != 0;
                 const logical = part * buffer.len + within;
                 if (std.mem.eql(u8, entry[0..11], ".          ") or std.mem.eql(u8, entry[0..11], "..         ")) {
@@ -201,14 +201,14 @@ pub fn scan(a: std.mem.Allocator, io: std.Io, reader: Reader, geometry: f.Geomet
         if (object_index != 0 and dots != 2) return error.FatInvalidDotEntry;
     }
     for (2..@as(usize, geometry.clusters) + 2) |index| {
-        if (graph.owners[index] == 0 and graph.value(@intCast(index)) != 0 and graph.value(@intCast(index)) != f.BAD) graph.orphans += 1;
+        if (graph.owners[index] == 0 and graph.value(@intCast(index)) != 0 and graph.value(@intCast(index)) != format.BAD) graph.orphans += 1;
     }
     return graph;
 }
 
-pub const Loaded = struct { boot: f.Boot, graph: Graph, copies_differ: bool, backup_bad: bool, info_bad: bool, dirty: bool };
+pub const Loaded = struct { boot: format.Boot, graph: Graph, copies_differ: bool, backup_bad: bool, info_bad: bool, dirty: bool };
 pub fn load(a: std.mem.Allocator, io: std.Io, reader: Reader, allow_repair: bool) !Loaded {
-    const boot = try f.loadBoot(a, io, reader);
+    const boot = try format.loadBoot(a, io, reader);
     const g = boot.geometry;
     try g.budget();
     var selected: ?Graph = null;
@@ -236,7 +236,7 @@ pub fn load(a: std.mem.Allocator, io: std.Io, reader: Reader, allow_repair: bool
         _ = candidate;
         if (selected) |previous| {
             var same = true;
-            for (0..@as(usize, g.clusters) + 2) |index| if ((f.get32(previous.fat, index * 4) & f.MASK) != (f.get32(fat, index * 4) & f.MASK)) {
+            for (0..@as(usize, g.clusters) + 2) |index| if ((format.get32(previous.fat, index * 4) & format.MASK) != (format.get32(fat, index * 4) & format.MASK)) {
                 same = false;
                 break;
             };
@@ -250,8 +250,8 @@ pub fn load(a: std.mem.Allocator, io: std.Io, reader: Reader, allow_repair: bool
         const backup = try a.alloc(u8, g.sector);
         defer a.free(backup);
         try reader.readInto(io, @as(u64, g.backup) * g.sector, backup);
-        if (!std.mem.eql(u8, backup, boot.bytes) or f.get16(backup, 510) != 0xaa55) backup_bad = true;
-        if (f.parse(backup, reader.target.capacity)) |other| {
+        if (!std.mem.eql(u8, backup, boot.bytes) or format.get16(backup, 510) != 0xaa55) backup_bad = true;
+        if (format.parse(backup, reader.target.capacity)) |other| {
             if (!std.meta.eql(g, other)) return error.FatAmbiguousBoot;
         } else |_| {}
     }
@@ -260,11 +260,11 @@ pub fn load(a: std.mem.Allocator, io: std.Io, reader: Reader, allow_repair: bool
         const info = try a.alloc(u8, g.sector);
         defer a.free(info);
         try reader.readInto(io, @as(u64, g.info) * g.sector, info);
-        const free = f.get32(info, 488);
-        const next = f.get32(info, 492);
-        info_bad = !f.infoValid(info) or (free != 0xffffffff and free != graph.free) or (next != 0xffffffff and (next < 2 or next >= g.clusters + 2));
+        const free = format.get32(info, 488);
+        const next = format.get32(info, 492);
+        info_bad = !format.infoValid(info) or (free != 0xffffffff and free != graph.free) or (next != 0xffffffff and (next < 2 or next >= g.clusters + 2));
     }
-    const dirty = graph.value(1) & f.CLEAN_BITS != f.CLEAN_BITS or boot.bytes[65] & 1 != 0;
+    const dirty = graph.value(1) & format.CLEAN_BITS != format.CLEAN_BITS or boot.bytes[65] & 1 != 0;
     if (!allow_repair) {
         if (differs) return error.FatTablesDiffer;
         if (backup_bad) return error.FatBackupBoot;

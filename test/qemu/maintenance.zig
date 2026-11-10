@@ -3,7 +3,7 @@ const std = @import("std");
 const utils = @import("utils");
 const initramfs = @import("initramfs");
 const clap = @import("clap");
-const h = @import("harness.zig");
+const harness = @import("harness.zig");
 
 const PARAMS = clap.parseParamsComptime(
     \\-h, --help  Display this help and exit.
@@ -68,17 +68,17 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, environ: *std.process.Envir
         });
     }
     const disk = try std.fs.path.join(allocator, &.{ output, "device.raw" });
-    try h.noComma(disk);
+    try harness.noComma(disk);
     const file = try std.Io.Dir.cwd().createFile(io, disk, .{ .exclusive = true });
     defer file.close(io);
     try file.setLength(io, 16 * 1024 * 1024);
-    var command = try h.baseCommand(allocator, io, environ, output, 4096);
+    var command = try harness.baseCommand(allocator, io, environ, output, 4096);
     try command.appendSlice(&.{
         "-nic",    "none",                                                                                                                                                                                                                                                                                                        "-kernel", kernel,                                                                    "-initrd",    image,
         "-append", if (parsed.args.storage != 0) "console=ttyS0 loglevel=4 panic=1 rdinit=/init pizza.boot=storage_test" else if (parsed.args.backend != 0) "console=ttyS0 loglevel=4 panic=1 rdinit=/init pizza.boot=backend_test" else "console=ttyS0 loglevel=4 panic=1 rdinit=/init pizza.boot=selftest pizza.kiosk=disable", "-drive",  try allocator.print("if=virtio,format=raw,readonly=on,file={s}", .{disk}), "-no-reboot",
     });
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(allocator, &.{ output, "command.json" }), .data = try std.json.Stringify.valueAlloc(allocator, command.items, .{ .whitespace = .indent_2 }) });
-    const serial = try h.runVm(allocator, io, environ, command.items, output, parsed.args.timeout orelse 120);
+    const serial = try harness.runVm(allocator, io, environ, command.items, output, parsed.args.timeout orelse 120);
     if (parsed.args.storage != 0) {
         const result = .{
             .ram_root = has(serial, "PIZZA_MAINT_RAM_ROOT_READY"),

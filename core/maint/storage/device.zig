@@ -12,6 +12,7 @@ pub const Reader = struct {
     target: model.Target,
     vtable: *const VTable,
     memory: ?*Controller = null,
+    write_granule: u32 = 0,
     region: ?Region = null,
 
     pub fn location(self: Reader) Region {
@@ -87,10 +88,11 @@ pub const Device = struct {
     physical_write_authorized: bool = false,
     vtable: *const VTable,
     memory: ?*Controller = null,
+    write_granule: u32 = 0,
     region: ?Region = null,
 
     pub fn reader(self: Device) Reader {
-        return .{ .context = self.context, .target = self.target, .vtable = &self.vtable.reader, .memory = self.memory, .region = self.region };
+        return .{ .context = self.context, .target = self.target, .vtable = &self.vtable.reader, .memory = self.memory, .region = self.region, .write_granule = self.write_granule };
     }
 
     pub fn read(self: Device, a: std.mem.Allocator, io: std.Io, range: model.Range) ![]u8 {

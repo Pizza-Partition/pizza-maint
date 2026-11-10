@@ -2,7 +2,7 @@ const std = @import("std");
 const utils = @import("utils");
 const initramfs = @import("initramfs");
 const clap = @import("clap");
-const h = @import("harness.zig");
+const harness = @import("harness.zig");
 
 const PARAMS = clap.parseParamsComptime(
     \\-h, --help  Display this help and exit.
@@ -64,7 +64,7 @@ pub fn run(
         &.{ output, "smoke.cpio.gz" },
     );
     try initramfs.staticInit(allocator, io, binary, initrd);
-    var command = try h.baseCommand(allocator, io, environ, output, 1024);
+    var command = try harness.baseCommand(allocator, io, environ, output, 1024);
     try command.appendSlice(
         &.{
             "-nic",
@@ -89,7 +89,7 @@ pub fn run(
             .{ .whitespace = .indent_2 },
         ),
     });
-    const serial = try h.runVm(
+    const serial = try harness.runVm(
         allocator,
         io,
         environ,

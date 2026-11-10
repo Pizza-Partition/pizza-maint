@@ -26,6 +26,8 @@ pub const Phase = enum(u8) {
     rolled_back,
     failed_bootstrap,
     failed_cleanup,
+    preparing,
+    preparing_cleanup,
 };
 pub const Bundle = struct {
     session: model.Digest,
@@ -128,13 +130,45 @@ pub const Session = struct {
         defer a.free(bytes);
         for (0..2) |i| {
             try disk.reader().readInto(io, bundle.control.offset + i * bytes.len, bytes);
-            if (std.mem.eql(u8, bytes[0..8], "PZSES001")) return error.MaintenanceSessionAlreadyExists;
+            if (self.decode(bytes)) |_| return error.MaintenanceSessionAlreadyExists else |_| {}
         }
-        _ = try Raw.format(a, io, disk, bundle.bootstrap_store, Raw.limitsFor(try executor.reservation(a, bundle.bootstrap, bundle.bootstrap_store.block_size, true), bundle.bootstrap_store.block_size));
-        _ = try Raw.format(a, io, disk, bundle.cleanup_store, Raw.limitsFor(try executor.reservation(a, bundle.cleanup, bundle.cleanup_store.block_size, true), bundle.cleanup_store.block_size));
-        try self.persist(io, .prepared);
-        try self.persist(io, .prepared);
+        // A torn first control write is restartable only while BOTH capsule
+        // headers still contain the host's zero reservation. Never erase logs
+        // merely because later control records have become corrupt.
+        for ([_]Descriptor{ bundle.bootstrap_store, bundle.cleanup_store }) |desc| {
+            try disk.reader().readInto(io, desc.extents[0].offset, bytes);
+            if (!std.mem.allEqual(u8, bytes, 0)) return error.InvalidSessionHeaders;
+        }
+        try self.persist(io, .preparing);
+        try self.persist(io, .preparing);
+        try self.initialize(io);
         return self;
+    }
+    fn initialize(self: *Session, io: std.Io) !void {
+        const a = self.allocator;
+        const bundle = self.bundle;
+        const zero = try a.alloc(u8, bundle.bootstrap_store.block_size);
+        defer a.free(zero);
+        @memset(zero, 0);
+        for ([_]Descriptor{ bundle.bootstrap_store, bundle.cleanup_store }) |desc| {
+            // Only initialization can enter this phase. Later failures must open
+            // and recover the existing logs instead of calling initialize().
+            try self.disk.write(io, .{ .offset = desc.extents[0].offset, .length = zero.len }, zero);
+            // A header may span a fragmented extent map. Find its second block.
+            var remaining: u64 = zero.len;
+            for (desc.extents) |extent| {
+                if (remaining < extent.length) {
+                    try self.disk.write(io, .{ .offset = extent.offset + remaining, .length = zero.len }, zero);
+                    break;
+                }
+                remaining -= extent.length;
+            }
+        }
+        try self.disk.flush(io);
+        _ = try Raw.format(a, io, self.disk, bundle.bootstrap_store, Raw.limitsFor(try executor.reservation(a, bundle.bootstrap, bundle.bootstrap_store.block_size, true), bundle.bootstrap_store.block_size));
+        _ = try Raw.format(a, io, self.disk, bundle.cleanup_store, Raw.limitsFor(try executor.reservation(a, bundle.cleanup, bundle.cleanup_store.block_size, true), bundle.cleanup_store.block_size));
+        try self.persist(io, .prepared);
+        try self.persist(io, .prepared);
     }
     pub fn open(a: std.mem.Allocator, io: std.Io, disk: device.Device, bundle: Bundle) !Session {
         try disk.validate(io);
@@ -217,15 +251,40 @@ pub const Session = struct {
         try executor.accept(self.allocator, io, self.disk, cap.store());
     }
     pub fn cleanup(self: *Session, io: std.Io, verifier: ?executor.Verifier, observer: ?executor.Observer) !void {
-        if (self.phase != .accepted) return error.InvalidSessionTransition;
+        if (self.phase != .accepted and self.phase != .failed_cleanup) return error.InvalidSessionTransition;
         var main = try self.capsule(io, self.bundle.apply_store);
         try executor.accept(self.allocator, io, self.disk, main.store());
+        if (self.phase == .failed_cleanup) {
+            // The previous cleanup has been fully rolled back. Its log can now
+            // be reset, after publishing an explicit accepted state for recovery.
+            try self.persist(io, .preparing_cleanup);
+            try self.initializeCleanup(io);
+        }
         var cap = try self.capsule(io, self.bundle.cleanup_store);
         try self.persist(io, .cleaning);
         try executor.executeDeferred(self.allocator, io, self.disk, cap.store(), self.bundle.cleanup, &.{}, verifier, observer);
         try self.persist(io, .committing_cleanup);
         try executor.accept(self.allocator, io, self.disk, cap.store());
         try self.persist(io, .completed);
+    }
+    fn initializeCleanup(self: *Session, io: std.Io) !void {
+        const desc = self.bundle.cleanup_store;
+        const zero = try self.allocator.alloc(u8, desc.block_size);
+        defer self.allocator.free(zero);
+        @memset(zero, 0);
+        for (0..2) |head| {
+            var remaining: u64 = head * zero.len;
+            for (desc.extents) |extent| {
+                if (remaining < extent.length) {
+                    try self.disk.write(io, .{ .offset = extent.offset + remaining, .length = zero.len }, zero);
+                    break;
+                }
+                remaining -= extent.length;
+            }
+        }
+        try self.disk.flush(io);
+        _ = try Raw.format(self.allocator, io, self.disk, desc, Raw.limitsFor(try executor.reservation(self.allocator, self.bundle.cleanup, desc.block_size, true), desc.block_size));
+        try self.persist(io, .accepted);
     }
     fn capsule(self: *Session, io: std.Io, desc: Descriptor) !Raw {
         return Raw.open(self.allocator, io, self.disk, desc);
@@ -234,6 +293,8 @@ pub const Session = struct {
     /// rolled back; completed execution resumes only its durable finalization.
     pub fn recover(self: *Session, io: std.Io) !void {
         switch (self.phase) {
+            .preparing => try self.initialize(io),
+            .preparing_cleanup => try self.initializeCleanup(io),
             .bootstrapping => {
                 var cap = try self.capsule(io, self.bundle.bootstrap_store);
                 const result = try executor.recover(self.allocator, io, self.disk, cap.store(), null);

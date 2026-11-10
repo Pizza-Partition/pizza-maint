@@ -2,7 +2,7 @@
 const std = @import("std");
 const model = @import("../../../model.zig");
 const btrfs = @import("../../../filesystem/btrfs/root.zig");
-const f = btrfs.format;
+const format = btrfs.format;
 const Fixture = @import("../fixture.zig").Fixture;
 const Image = @import("../../image.zig").Image;
 const command = @import("../../tools.zig").command;
@@ -28,7 +28,7 @@ fn seedPayload(a: std.mem.Allocator, io: std.Io, home: []const u8, path: []const
     try std.Io.Dir.cwd().createDir(io, dir, .default_dir);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ dir, "payload" }), .data = bytes });
     var image = try Image.open(io, path, @import("../../fixture.zig").IDENTITY, 512);
-    const g = try f.load(io, image.reader());
+    const g = try format.load(io, image.reader());
     image.close(io);
     try mkfs(a, io, path, g.bytes(), dir, "single", "crc32c", "^free-space-tree,^block-group-tree");
     if (tail) try moveToTail(a, io, path);
@@ -45,17 +45,17 @@ fn checkPayload(a: std.mem.Allocator, io: std.Io, path: []const u8, output: []co
 }
 fn makeRepairable(_: std.mem.Allocator, io: std.Io, image: *Image) !void {
     var byte: [1]u8 = undefined;
-    try image.reader().readInto(io, f.MIRRORS[1], &byte);
+    try image.reader().readInto(io, format.MIRRORS[1], &byte);
     byte[0] ^= 0xff;
-    try image.file.writePositionalAll(io, &byte, f.MIRRORS[1]);
+    try image.file.writePositionalAll(io, &byte, format.MIRRORS[1]);
 }
 /// Test only: put the entire chunk containing file extents beyond the shrink
 /// boundary, then poison its released source so stale mappings cannot pass.
 pub fn moveToTail(a: std.mem.Allocator, io: std.Io, path: []const u8) !void {
-    return moveChunk(a, io, path, f.c.BTRFS_BLOCK_GROUP_DATA);
+    return moveChunk(a, io, path, format.c_api.BTRFS_BLOCK_GROUP_DATA);
 }
 pub fn moveSystemToTail(a: std.mem.Allocator, io: std.Io, path: []const u8) !void {
-    return moveChunk(a, io, path, f.c.BTRFS_BLOCK_GROUP_SYSTEM);
+    return moveChunk(a, io, path, format.c_api.BTRFS_BLOCK_GROUP_SYSTEM);
 }
 fn moveChunk(a: std.mem.Allocator, io: std.Io, path: []const u8, flags: u64) !void {
     var image = try Image.open(io, path, @import("../../fixture.zig").IDENTITY, 512);
@@ -82,11 +82,11 @@ fn moveChunk(a: std.mem.Allocator, io: std.Io, path: []const u8, flags: u64) !vo
                 try overlay.stageWrite(io, dest + cursor, buffer);
                 try overlay.stageWrite(io, previous + cursor, &zeros);
             }
-            for ((try graph.tree(4)).leaves) |logical| for ((try graph.node(logical)).entries) |*entry| if (entry.key.kind == f.c.BTRFS_DEV_EXTENT_KEY and entry.key.offset == previous) {
+            for ((try graph.tree(4)).leaves) |logical| for ((try graph.node(logical)).entries) |*entry| if (entry.key.kind == format.c_api.BTRFS_DEV_EXTENT_KEY and entry.key.offset == previous) {
                 entry.key.offset = dest;
             };
             source.physical = dest;
-            f.put(f.STRIPE, "offset", chunk.raw[@offsetOf(f.CHUNK, "stripe") + index * @sizeOf(f.STRIPE) ..], dest);
+            format.put(format.STRIPE, "offset", chunk.raw[@offsetOf(format.CHUNK, "stripe") + index * @sizeOf(format.STRIPE) ..], dest);
         }
         moved = true;
         break;

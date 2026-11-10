@@ -2,7 +2,7 @@ const std = @import("std");
 const utils = @import("utils");
 const bundle = @import("bundle");
 const clap = @import("clap");
-const h = @import("vm").harness;
+const harness = @import("vm").harness;
 
 fn checkFixtures(
     allocator: std.mem.Allocator,
@@ -51,7 +51,7 @@ fn checkFixtures(
             .string => |text| text,
             else => return error.ExpectedString,
         });
-        try h.noComma(path);
+        try harness.noComma(path);
         if (!std.mem.eql(
             u8,
             try utils.filesystem.hashFileSha256(allocator, io, path),
@@ -174,7 +174,7 @@ pub fn run(
     if (binary_stat.kind != .file) {
         return error.BundledAbiCheckBinaryMissing;
     }
-    try h.noComma(root);
+    try harness.noComma(root);
     const output = try utils.filesystem.createTemporaryDirectory(
         allocator,
         io,
@@ -297,7 +297,7 @@ pub fn run(
                 meta_file,
             },
         );
-        var qemu = try h.baseCommand(allocator, io, environ, directory, 2048);
+        var qemu = try harness.baseCommand(allocator, io, environ, directory, 2048);
         try qemu.appendSlice(
             &.{
                 "-nic",
@@ -320,7 +320,7 @@ pub fn run(
                 ),
             },
         );
-        const log = try h.runVm(
+        const log = try harness.runVm(
             allocator,
             io,
             environ,

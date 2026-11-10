@@ -6,7 +6,7 @@ const Fixture = @import("../fixture.zig").Fixture;
 const Image = @import("../../image.zig").Image;
 const IDENTITY = @import("../../fixture.zig").IDENTITY;
 const command = @import("../../tools.zig").command;
-const f = fat.format;
+const format = fat.format;
 pub const FIXTURES = [_]Fixture{.{ .filesystem = .vfat, .capacity = 128 * 1024 * 1024, .smaller_bytes = 64 * 1024 * 1024, .vtable = &VTABLE }};
 const VTABLE: Fixture.VTable = .{ .create = create, .seed_payload = seedPayload, .check = check, .check_payload = checkPayload, .make_repairable = makeRepairable };
 
@@ -37,7 +37,7 @@ fn makeRepairable(a: std.mem.Allocator, io: std.Io, image: *Image) !void {
     const loaded = try fat.scan.load(a, io, image.reader(), false);
     var bytes: [512]u8 = undefined;
     try image.reader().readInto(io, @as(u64, loaded.boot.geometry.info) * loaded.boot.geometry.sector, &bytes);
-    f.put32(&bytes, 488, loaded.graph.free - 1);
+    format.put32(&bytes, 488, loaded.graph.free - 1);
     try image.file.writePositionalAll(io, &bytes, @as(u64, loaded.boot.geometry.info) * loaded.boot.geometry.sector);
 }
 pub fn movePayloadToTail(a: std.mem.Allocator, io: std.Io, path: []const u8) !void {
@@ -62,7 +62,7 @@ pub fn movePayloadToTail(a: std.mem.Allocator, io: std.Io, path: []const u8) !vo
         const offset = try g.offset(root.chain[reference.position / g.clusterBytes()]) + reference.position % g.clusterBytes();
         var entry: [32]u8 = undefined;
         try image.reader().readInto(io, offset, &entry);
-        f.setFirst(&entry, tail);
+        format.setFirst(&entry, tail);
         try image.file.writePositionalAll(io, &entry, offset);
         updated = true;
     };

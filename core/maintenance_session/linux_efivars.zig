@@ -5,6 +5,10 @@ const uefi = @import("uefi.zig");
 const GLOBAL = uefi.GLOBAL_GUID;
 // Pizza vendor namespace. Never clear flags on arbitrary firmware variables.
 const PIZZA = uefi.PIZZA_GUID;
+// Linux x86-64 ioctl ABI.
+const FS_IOC_GETFLAGS: u32 = 0x80086601;
+const FS_IOC_SETFLAGS: u32 = 0x40086602;
+const FS_IMMUTABLE_FL: c_ulong = 0x10;
 pub const SecureBoot = enum { enabled, disabled, unknown };
 pub const Efivars = struct {
     directory: std.Io.Dir,
@@ -13,7 +17,7 @@ pub const Efivars = struct {
         if (writable and std.os.linux.geteuid() != 0) return error.FirmwareRequiresRoot;
         var directory = try std.Io.Dir.cwd().openDir(io, "/sys/firmware/efi/efivars", .{});
         errdefer directory.close(io);
-        if (try @import("utils").filesystem.filesystemType(directory) != 0xde5e81e4) return error.EfivarfsRequired;
+        if (try @import("utils").filesystem.filesystemType(directory) != @import("utils").filesystem.EFIVARFS_MAGIC) return error.EfivarfsRequired;
         return .{ .directory = directory, .writable = writable };
     }
     pub fn close(self: *Efivars, io: std.Io) void {
@@ -109,14 +113,13 @@ pub const Efivars = struct {
 
 fn setFlags(file: std.Io.File, flags: c_ulong) !void {
     var value = flags;
-    // FS_IOC_SETFLAGS: this initial native backend supports x86-64 Linux.
-    if (std.os.linux.errno(std.os.linux.ioctl(file.handle, 0x40086602, @intFromPtr(&value))) != .SUCCESS) return error.FirmwareVariableFlagsFailed;
+    if (std.os.linux.errno(std.os.linux.ioctl(file.handle, FS_IOC_SETFLAGS, @intFromPtr(&value))) != .SUCCESS) return error.FirmwareVariableFlagsFailed;
 }
 fn unlock(file: std.Io.File) !c_ulong {
     var flags: c_ulong = 0;
-    if (std.os.linux.errno(std.os.linux.ioctl(file.handle, 0x80086601, @intFromPtr(&flags))) != .SUCCESS) return error.FirmwareVariableFlagsFailed;
-    if (flags & ~@as(c_ulong, 0x10) != 0) return error.UnsupportedFirmwareVariableFlags;
-    if (flags & 0x10 != 0) try setFlags(file, flags & ~@as(c_ulong, 0x10));
+    if (std.os.linux.errno(std.os.linux.ioctl(file.handle, FS_IOC_GETFLAGS, @intFromPtr(&flags))) != .SUCCESS) return error.FirmwareVariableFlagsFailed;
+    if (flags & ~FS_IMMUTABLE_FL != 0) return error.UnsupportedFirmwareVariableFlags;
+    if (flags & FS_IMMUTABLE_FL != 0) try setFlags(file, flags & ~FS_IMMUTABLE_FL);
     return flags;
 }
 

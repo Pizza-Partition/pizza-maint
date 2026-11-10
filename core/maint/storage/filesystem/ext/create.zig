@@ -1,9 +1,9 @@
 //! Native ext2/3/4 empty layout and record encoding; only CRC primitives reused.
 const std = @import("std");
 const root = @import("root.zig");
-const c = root.c;
+const c_api = root.c_api;
 const model = @import("../../model.zig");
-const s = @import("../../semantic.zig");
+const semantic = @import("../../semantic.zig");
 const mutation = @import("../../mutation.zig");
 pub const Group = struct { first: u64, count: u32, bitmap: u64, inode_bitmap: u64, inode_table: u64, backup: bool };
 pub const Geometry = struct {
@@ -56,8 +56,8 @@ pub fn describe(a: std.mem.Allocator, bytes: u64, sector: u32, filesystem: model
     result.* = .{ .bytes = bytes, .block = block, .blocks = blocks, .per_group = per_group, .inodes_per_group = ipg, .inode_blocks = inode_blocks, .descriptor_size = descriptor_size, .descriptor_blocks = descriptor_blocks, .groups = groups, .reserved = try reserved.toOwnedSlice(a), .filesystem = filesystem };
     return result;
 }
-pub fn requirements(a: std.mem.Allocator, g: *const Geometry) ![]s.Requirement {
-    var list: std.ArrayList(s.Requirement) = .empty;
+pub fn requirements(a: std.mem.Allocator, g: *const Geometry) ![]semantic.Requirement {
+    var list: std.ArrayList(semantic.Requirement) = .empty;
     for ([_]u64{ 1, 2 }) |id| try list.append(a, .{ .id = id, .bytes = g.block, .granule = g.block, .alignment = g.block, .bounds = .{ .offset = 0, .length = g.bytes } });
     if (g.filesystem != .ext2) {
         try list.append(a, .{ .id = 3, .bytes = @as(u64, 1024) * g.block, .granule = 1024 * g.block, .alignment = g.block, .bounds = .{ .offset = 0, .length = g.bytes } });
@@ -69,12 +69,12 @@ fn put(comptime T: type, b: []u8, at: usize, value: T) void {
     std.mem.writeInt(T, b[at..][0..@sizeOf(T)], value, .little);
 }
 fn crc(seed: u32, b: []const u8) u32 {
-    return c.ext2fs_crc32c_le(seed, b.ptr, b.len);
+    return c_api.ext2fs_crc32c_le(seed, b.ptr, b.len);
 }
 fn setBit(b: []u8, index: u64) void {
     b[@intCast(index / 8)] |= @as(u8, 1) << @intCast(index % 8);
 }
-fn place(placements: []const s.Placement, id: u64, block: u32) !u64 {
+fn place(placements: []const semantic.Placement, id: u64, block: u32) !u64 {
     for (placements) |p| if (p.id == id and p.ranges.len == 1) return p.ranges[0].offset / block;
     return error.MissingAllocationPlacement;
 }
@@ -137,44 +137,44 @@ fn directory(a: std.mem.Allocator, g: *const Geometry, seed: u32, number: u32, p
     }
     return b;
 }
-pub fn encode(a: std.mem.Allocator, io: std.Io, target: model.Target, g: *const Geometry, placements: []const s.Placement) !mutation.MutationSet {
+pub fn encode(a: std.mem.Allocator, io: std.Io, target: model.Target, g: *const Geometry, placements: []const semantic.Placement) !mutation.MutationSet {
     const root_block = try place(placements, 1, g.block);
     const lost_block = try place(placements, 2, g.block);
     const journal = if (g.filesystem != .ext2) try place(placements, 3, g.block) else 0;
     const indirect: ?u64 = if (g.filesystem == .ext3) try place(placements, 4, g.block) else null;
-    var sb = std.mem.zeroes(c.struct_ext2_super_block);
+    var sb = std.mem.zeroes(c_api.struct_ext2_super_block);
     sb.s_inodes_count = @intCast(@as(u64, g.inodes_per_group) * g.groups.len);
     sb.s_log_block_size = std.math.log2_int(u32, g.block) - 10;
     sb.s_log_cluster_size = sb.s_log_block_size;
     sb.s_blocks_per_group = g.per_group;
     sb.s_clusters_per_group = g.per_group;
     sb.s_inodes_per_group = g.inodes_per_group;
-    sb.s_magic = c.EXT2_SUPER_MAGIC;
-    sb.s_state = c.EXT2_VALID_FS;
-    sb.s_errors = c.EXT2_ERRORS_RO;
+    sb.s_magic = c_api.EXT2_SUPER_MAGIC;
+    sb.s_state = c_api.EXT2_VALID_FS;
+    sb.s_errors = c_api.EXT2_ERRORS_RO;
     sb.s_max_mnt_count = @bitCast(@as(i16, -1));
     sb.s_rev_level = 1;
     sb.s_first_ino = 11;
     sb.s_inode_size = 256;
-    sb.s_feature_compat = c.EXT2_FEATURE_COMPAT_EXT_ATTR | c.EXT2_FEATURE_COMPAT_DIR_INDEX;
-    sb.s_feature_incompat = c.EXT2_FEATURE_INCOMPAT_FILETYPE;
-    sb.s_feature_ro_compat = c.EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER | c.EXT2_FEATURE_RO_COMPAT_LARGE_FILE;
+    sb.s_feature_compat = c_api.EXT2_FEATURE_COMPAT_EXT_ATTR | c_api.EXT2_FEATURE_COMPAT_DIR_INDEX;
+    sb.s_feature_incompat = c_api.EXT2_FEATURE_INCOMPAT_FILETYPE;
+    sb.s_feature_ro_compat = c_api.EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER | c_api.EXT2_FEATURE_RO_COMPAT_LARGE_FILE;
     std.Io.random(io, &sb.s_uuid);
     sb.s_uuid[6] = (sb.s_uuid[6] & 15) | 0x40;
     sb.s_uuid[8] = (sb.s_uuid[8] & 63) | 0x80;
     if (g.filesystem != .ext2) {
-        sb.s_feature_compat |= c.EXT3_FEATURE_COMPAT_HAS_JOURNAL;
+        sb.s_feature_compat |= c_api.EXT3_FEATURE_COMPAT_HAS_JOURNAL;
         sb.s_journal_inum = 8;
     }
     if (g.filesystem == .ext4) {
-        sb.s_feature_incompat |= c.EXT3_FEATURE_INCOMPAT_EXTENTS | c.EXT4_FEATURE_INCOMPAT_64BIT;
-        sb.s_feature_ro_compat |= c.EXT4_FEATURE_RO_COMPAT_METADATA_CSUM | c.EXT4_FEATURE_RO_COMPAT_EXTRA_ISIZE | c.EXT4_FEATURE_RO_COMPAT_HUGE_FILE | c.EXT4_FEATURE_RO_COMPAT_DIR_NLINK;
+        sb.s_feature_incompat |= c_api.EXT3_FEATURE_INCOMPAT_EXTENTS | c_api.EXT4_FEATURE_INCOMPAT_64BIT;
+        sb.s_feature_ro_compat |= c_api.EXT4_FEATURE_RO_COMPAT_METADATA_CSUM | c_api.EXT4_FEATURE_RO_COMPAT_EXTRA_ISIZE | c_api.EXT4_FEATURE_RO_COMPAT_HUGE_FILE | c_api.EXT4_FEATURE_RO_COMPAT_DIR_NLINK;
         sb.s_desc_size = 64;
         sb.s_min_extra_isize = 32;
         sb.s_want_extra_isize = 32;
         sb.s_checksum_type = 1;
     }
-    c.ext2fs_blocks_count_set(&sb, g.blocks);
+    c_api.ext2fs_blocks_count_set(&sb, g.blocks);
     const seed = crc(0xffffffff, &sb.s_uuid);
     var collector: mutation.Collector = .{ .allocator = a, .target = target };
     const descriptors = try a.alloc(u8, @as(usize, g.descriptor_blocks) * g.block);
@@ -232,7 +232,7 @@ pub fn encode(a: std.mem.Allocator, io: std.Io, target: model.Target, g: *const 
         try collector.write(group.inode_table * g.block, table);
     }
     sb.s_free_inodes_count = sb.s_inodes_count - 11;
-    c.ext2fs_free_blocks_count_set(&sb, free_blocks);
+    c_api.ext2fs_free_blocks_count_set(&sb, free_blocks);
     try collector.write(root_block * g.block, try directory(a, g, seed, 2, 2, true));
     try collector.write(lost_block * g.block, try directory(a, g, seed, 11, 2, false));
     if (journal != 0) {
@@ -258,7 +258,12 @@ pub fn encode(a: std.mem.Allocator, io: std.Io, target: model.Target, g: *const 
         var copy = sb;
         copy.s_block_group_nr = @intCast(@min(index, 65535));
         if (g.filesystem == .ext4) copy.s_checksum = crc(0xffffffff, std.mem.asBytes(&copy)[0..1020]);
-        try collector.write(if (index == 0) 1024 else group.first * g.block, std.mem.asBytes(&copy));
+        if (index == 0) {
+            const primary = try a.alloc(u8, g.block);
+            @memset(primary, 0);
+            @memcpy(primary[1024..][0..@sizeOf(@TypeOf(copy))], std.mem.asBytes(&copy));
+            try collector.write(0, primary);
+        } else try collector.write(group.first * g.block, std.mem.asBytes(&copy));
         try collector.write((group.first + 1) * g.block, descriptors);
     };
     const changes = try collector.finish();

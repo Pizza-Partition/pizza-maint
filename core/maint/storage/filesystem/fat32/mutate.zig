@@ -1,7 +1,7 @@
 //! FAT32 plans cover all FAT copies, boot/FSInfo records, directory references
 //! and relocated payload bytes. No mutation reaches the underlying device.
 const std = @import("std");
-const f = @import("format.zig");
+const format = @import("format.zig");
 const scanner = @import("scan.zig");
 const Builder = @import("../../mutation.zig").Builder;
 const Reader = @import("../../device.zig").Reader;
@@ -15,7 +15,7 @@ pub fn prepareRepair(a: std.mem.Allocator, io: std.Io, reader: Reader, clusters:
     return overlay.finish(io, false);
 }
 
-pub fn writeFat(a: std.mem.Allocator, io: std.Io, overlay: *Builder, g: f.Geometry, old: f.Geometry, fat: []const u8) !void {
+pub fn writeFat(a: std.mem.Allocator, io: std.Io, overlay: *Builder, g: format.Geometry, old: format.Geometry, fat: []const u8) !void {
     const previous = try a.alloc(u8, old.fatBytes());
     defer a.free(previous);
     const output = try a.alloc(u8, fat.len);
@@ -25,16 +25,16 @@ pub fn writeFat(a: std.mem.Allocator, io: std.Io, overlay: *Builder, g: f.Geomet
         // the new physical address may contain user data, not an old entry.
         try overlay.originalReader().readInto(io, old.fatOffset(@intCast(copy)), previous);
         for (0..fat.len / 4) |index| {
-            const reserved = if (index < previous.len / 4) f.get32(previous, index * 4) & ~f.MASK else 0;
-            f.put32(output, index * 4, reserved | (f.get32(fat, index * 4) & f.MASK));
+            const reserved = if (index < previous.len / 4) format.get32(previous, index * 4) & ~format.MASK else 0;
+            format.put32(output, index * 4, reserved | (format.get32(fat, index * 4) & format.MASK));
         }
         try overlay.stageWrite(io, g.fatOffset(@intCast(copy)), output);
     }
 }
-pub fn writeAux(a: std.mem.Allocator, io: std.Io, overlay: *Builder, g: f.Geometry, boot: []const u8, fat: []const u8) !void {
+pub fn writeAux(a: std.mem.Allocator, io: std.Io, overlay: *Builder, g: format.Geometry, boot: []const u8, fat: []const u8) !void {
     var free: u32 = 0;
     var next: u32 = 0xffffffff;
-    for (2..@as(usize, g.clusters) + 2) |index| if (f.get32(fat, index * 4) & f.MASK == 0) {
+    for (2..@as(usize, g.clusters) + 2) |index| if (format.get32(fat, index * 4) & format.MASK == 0) {
         free += 1;
         if (next == 0xffffffff) next = @intCast(index);
     };
@@ -43,7 +43,7 @@ pub fn writeAux(a: std.mem.Allocator, io: std.Io, overlay: *Builder, g: f.Geomet
     if (g.info != 0 and g.info != 0xffff) {
         const info = try a.alloc(u8, g.sector);
         defer a.free(info);
-        f.makeInfo(info, free, next);
+        format.makeInfo(info, free, next);
         try overlay.stageWrite(io, @as(u64, g.info) * g.sector, info);
         if (g.backup != 0 and g.backup != 0xffff and @as(u32, g.backup) + g.info < g.reserved)
             try overlay.stageWrite(io, (@as(u64, g.backup) + g.info) * g.sector, info);
@@ -54,7 +54,7 @@ fn repair(a: std.mem.Allocator, io: std.Io, overlay: *Builder, clusters: []const
     var loaded = try scanner.load(a, io, overlay.reader(), true);
     if (loaded.graph.value(1) & 0x04000000 == 0) return error.FatSurfaceScanRequired;
     try salvage(a, io, overlay, &loaded.graph, clusters);
-    loaded.graph.set(1, loaded.graph.value(1) | f.CLEAN_BITS);
+    loaded.graph.set(1, loaded.graph.value(1) | format.CLEAN_BITS);
     loaded.boot.bytes[65] &= ~@as(u8, 1);
     try writeFat(a, io, overlay, loaded.boot.geometry, loaded.boot.geometry, loaded.graph.fat);
     try writeAux(a, io, overlay, loaded.boot.geometry, loaded.boot.bytes, loaded.graph.fat);
@@ -72,7 +72,8 @@ fn lostFiles(a: std.mem.Allocator, graph: *scanner.Graph) ![]Salvage {
     @memset(incoming, 0);
     for (2..graph.owners.len) |index| {
         const value = graph.value(@intCast(index));
-        if (graph.owners[index] != 0 or value == 0 or value == f.BAD or f.terminal(value)) continue;
+        if (graph.owners[index] != 0 or value == 0 or value == format.BAD or format.terminal(value)) continue;
+        if (value < 2 or value >= graph.owners.len) return error.FatInvalidCluster;
         if (graph.owners[value] != 0 or incoming[value] != 0) return error.FatCrossLink;
         incoming[value] = 1;
     }
@@ -80,18 +81,20 @@ fn lostFiles(a: std.mem.Allocator, graph: *scanner.Graph) ![]Salvage {
     const max_chain = std.math.maxInt(u32) / g.clusterBytes();
     for (0..2) |pass| {
         for (2..graph.owners.len) |index| {
-            if (graph.owners[index] != 0 or graph.value(@intCast(index)) == 0 or graph.value(@intCast(index)) == f.BAD or (pass == 0 and incoming[index] != 0)) continue;
+            if (graph.owners[index] != 0 or graph.value(@intCast(index)) == 0 or graph.value(@intCast(index)) == format.BAD or (pass == 0 and incoming[index] != 0)) continue;
             var cluster: u32 = @intCast(index);
             var head = cluster;
             var count: u32 = 0;
             while (true) {
+                if (cluster < 2 or cluster >= graph.owners.len) return error.FatInvalidCluster;
                 if (graph.owners[cluster] != 0) return error.FatCrossLink;
                 graph.owners[cluster] = std.math.maxInt(u32);
                 count += 1;
                 const next = graph.value(cluster);
-                const done = f.terminal(next) or next == index;
+                if (next == 0 or next == format.BAD or (!format.terminal(next) and (next < 2 or next >= graph.owners.len))) return error.FatInvalidCluster;
+                const done = format.terminal(next) or next == index;
                 if (done or count == max_chain) {
-                    graph.set(cluster, f.EOC);
+                    graph.set(cluster, format.EOC);
                     try files.append(a, .{ .head = head, .bytes = count * g.clusterBytes() });
                     if (done) break;
                     head = next;
@@ -173,7 +176,7 @@ fn salvage(a: std.mem.Allocator, io: std.Io, overlay: *Builder, graph: *scanner.
         used += 1;
         if (cursor < 2 or cursor >= g.clusters + 2 or graph.value(cursor) != 0) return error.InvalidRepairPlacement;
         graph.set(last, cursor);
-        graph.set(cursor, f.EOC);
+        graph.set(cursor, format.EOC);
         graph.owners[cursor] = 1;
         const base = try g.offset(cursor);
         @memset(buffer, 0);
@@ -195,8 +198,26 @@ fn salvage(a: std.mem.Allocator, io: std.Io, overlay: *Builder, graph: *scanner.
         var entry: [32]u8 = @splat(0);
         @memcpy(entry[0..11], &name);
         entry[11] = 0x20;
-        f.setFirst(&entry, file.head);
-        f.put32(&entry, 28, file.bytes);
+        format.setFirst(&entry, file.head);
+        format.put32(&entry, 28, file.bytes);
         try overlay.stageWrite(io, offset, &entry);
+    }
+}
+
+test "orphan salvage rejects chains entering bad, free, reserved or out-of-range clusters" {
+    for ([_]u32{ 0, format.BAD, 1, 99 }) |end| {
+        var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        var geometry = std.mem.zeroes(format.Geometry);
+        geometry.sector = 512;
+        geometry.per_cluster = 1;
+        geometry.clusters = 6;
+        var fat: [32]u8 = @splat(0);
+        var owners: [8]u32 = @splat(0);
+        var graph: scanner.Graph = .{ .allocator = a, .geometry = geometry, .fat = &fat, .owners = &owners, .orphans = 1 };
+        graph.set(2, 3);
+        graph.set(3, end);
+        try std.testing.expectError(error.FatInvalidCluster, lostFiles(a, &graph));
     }
 }

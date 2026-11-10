@@ -1,7 +1,7 @@
 const std = @import("std");
 const storage = @import("storage");
 const fat = storage.fat32;
-const f = fat.format;
+const format = fat.format;
 const Image = storage.testing.Image;
 const IDENTITY = storage.testing.fixture.IDENTITY;
 const tools = storage.testing.tools;
@@ -23,10 +23,10 @@ fn variant(a: std.mem.Allocator, io: std.Io, root: []const u8, capacity: u64, se
     try tools.command(a, io, &.{ "mkfs.fat", "-F", "32", "-s", try a.print("{d}", .{per_cluster}), "-S", try a.print("{d}", .{sector}), "-f", try a.print("{d}", .{copies}), path });
     return path;
 }
-fn pokeFat(io: std.Io, image: *Image, g: f.Geometry, copy: u32, cluster: u32, value: u32) !void {
+fn pokeFat(io: std.Io, image: *Image, g: format.Geometry, copy: u32, cluster: u32, value: u32) !void {
     var bytes: [4]u8 = undefined;
     try image.reader().readInto(io, g.fatOffset(copy) + @as(u64, cluster) * 4, &bytes);
-    f.put32(&bytes, 0, (f.get32(&bytes, 0) & ~f.MASK) | value);
+    format.put32(&bytes, 0, (format.get32(&bytes, 0) & ~format.MASK) | value);
     try image.file.writePositionalAll(io, &bytes, g.fatOffset(copy) + @as(u64, cluster) * 4);
 }
 
@@ -112,7 +112,7 @@ test "FAT32 repairs boot backup, FSInfo, dirty flag and a uniquely damaged FAT m
     try pokeFat(io, &image, g, 0, g.root, 0);
     try std.testing.expect(!(try REGISTRY.check(a, io, image.reader())).consistent);
     _ = try suite.run(a, io, &image, root, "mirror", .{ .kind = .repair });
-    for (0..g.copies) |copy| try pokeFat(io, &image, g, @intCast(copy), 1, f.EOC & ~@as(u32, 0x08000000));
+    for (0..g.copies) |copy| try pokeFat(io, &image, g, @intCast(copy), 1, format.EOC & ~@as(u32, 0x08000000));
     _ = try suite.run(a, io, &image, root, "dirty", .{ .kind = .repair });
     try image.file.writePositionalAll(io, &.{0}, @as(u64, g.info) * g.sector);
     _ = try suite.run(a, io, &image, root, "info", .{ .kind = .repair });
@@ -170,7 +170,7 @@ test "FAT32 refuses ambiguous mirrors, live cycles, cross-links and impossible s
     defer image.close(io);
     const loaded = try fat.scan.load(a, io, image.reader(), false);
     const g = loaded.boot.geometry;
-    try pokeFat(io, &image, g, 0, loaded.graph.next_free, f.EOC);
+    try pokeFat(io, &image, g, 0, loaded.graph.next_free, format.EOC);
     var before = try tools.digest(io, image.reader());
     try std.testing.expectError(error.FatAmbiguousTables, suite.run(a, io, &image, root, "ambiguous", .{ .kind = .repair }));
     try std.testing.expectEqualSlices(u8, &before, &try tools.digest(io, image.reader()));
@@ -179,17 +179,17 @@ test "FAT32 refuses ambiguous mirrors, live cycles, cross-links and impossible s
     before = try tools.digest(io, image.reader());
     try std.testing.expectError(error.FatChainCycle, suite.run(a, io, &image, root, "cycle", .{ .kind = .repair }));
     try std.testing.expectEqualSlices(u8, &before, &try tools.digest(io, image.reader()));
-    for (0..g.copies) |copy| try pokeFat(io, &image, g, @intCast(copy), g.root, f.EOC);
+    for (0..g.copies) |copy| try pokeFat(io, &image, g, @intCast(copy), g.root, format.EOC);
     var entries: [64]u8 = @splat(0);
     for (0..2) |index| {
         const entry = entries[index * 32 ..][0..32];
         @memcpy(entry[0..11], if (index == 0) "FILEA   BIN" else "FILEB   BIN");
         entry[11] = 0x20;
-        f.setFirst(entry, loaded.graph.next_free);
-        f.put32(entry, 28, 4);
+        format.setFirst(entry, loaded.graph.next_free);
+        format.put32(entry, 28, 4);
     }
     try image.file.writePositionalAll(io, &entries, try g.offset(g.root));
-    for (0..g.copies) |copy| try pokeFat(io, &image, g, @intCast(copy), loaded.graph.next_free, f.EOC);
+    for (0..g.copies) |copy| try pokeFat(io, &image, g, @intCast(copy), loaded.graph.next_free, format.EOC);
     before = try tools.digest(io, image.reader());
     try std.testing.expectError(error.FatCrossLink, suite.run(a, io, &image, root, "crosslink", .{ .kind = .repair }));
     try std.testing.expectEqualSlices(u8, &before, &try tools.digest(io, image.reader()));
@@ -216,14 +216,14 @@ test "FAT32 honors the active FAT and preserves physical bad clusters during gro
     const g = loaded.boot.geometry;
     // Inactive FAT #0 is stale. Only FAT #1 is authoritative.
     var flags: [2]u8 = undefined;
-    f.put16(&flags, 0, 0x81);
+    format.put16(&flags, 0, 0x81);
     try image.file.writePositionalAll(io, &flags, 40);
     try image.file.writePositionalAll(io, &flags, @as(u64, g.backup) * g.sector + 40);
     try pokeFat(io, &image, g, 0, g.root, 0);
     try std.testing.expect((try REGISTRY.check(a, io, image.reader())).consistent);
     const bad_cluster = g.clusters / 2;
     const bad_position = try g.offset(bad_cluster);
-    try pokeFat(io, &image, g, 1, bad_cluster, f.BAD);
+    try pokeFat(io, &image, g, 1, bad_cluster, format.BAD);
     _ = try suite.run(a, io, &image, root, "bad-info", .{ .kind = .repair });
     _ = try suite.run(a, io, &image, root, "grow", .{ .kind = .grow, .target_bytes = provider.capacity });
     const grown = try fat.scan.load(a, io, image.reader(), false);
@@ -231,11 +231,11 @@ test "FAT32 honors the active FAT and preserves physical bad clusters during gro
     try std.testing.expectEqual(@as(u32, 1), ng.active());
     try std.testing.expect(!ng.mirrored());
     const relocated_bad: u32 = @intCast((bad_position - ng.dataStart()) / ng.clusterBytes() + 2);
-    try std.testing.expectEqual(f.BAD, grown.graph.value(relocated_bad));
+    try std.testing.expectEqual(format.BAD, grown.graph.value(relocated_bad));
     try std.testing.expectEqual(bad_position, try ng.offset(relocated_bad));
     try tools.command(a, io, &.{ "fsck.fat", "-n", path });
     // A reported hardware error cannot be 'repaired' by clearing its bit.
-    try pokeFat(io, &image, ng, 1, 1, f.EOC & ~@as(u32, 0x04000000));
+    try pokeFat(io, &image, ng, 1, 1, format.EOC & ~@as(u32, 0x04000000));
     const before = try tools.digest(io, image.reader());
     try std.testing.expectError(error.FatSurfaceScanRequired, suite.run(a, io, &image, root, "hardware", .{ .kind = .repair }));
     try std.testing.expectEqualSlices(u8, &before, &try tools.digest(io, image.reader()));
@@ -304,7 +304,7 @@ test "FAT32 repair requests directory growth space from the common allocator" {
     @memset(payload, 0xa7);
     for (0..count) |i| {
         const cluster = loaded.graph.next_free + @as(u32, @intCast(i));
-        for (0..g.copies) |copy| try pokeFat(io, &image, g, @intCast(copy), cluster, f.EOC);
+        for (0..g.copies) |copy| try pokeFat(io, &image, g, @intCast(copy), cluster, format.EOC);
         try image.file.writePositionalAll(io, payload, try g.offset(cluster));
     }
     try image.file.sync(io);

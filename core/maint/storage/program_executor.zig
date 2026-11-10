@@ -175,6 +175,10 @@ fn executeOptions(a: std.mem.Allocator, io: std.Io, disk: device.Device, store: 
     if (!std.mem.eql(u8, &p.digest, &incoming.digest)) return error.StorageProgramChecksum;
     try p.validate();
     if (!p.target.same(disk.target)) return error.TransactionTargetMismatch;
+    const granule = @max(disk.target.sector_size, disk.write_granule);
+    for (p.steps, 0..) |_, index| if (p.targetRange(index)) |range| {
+        if (range.offset % granule != 0 or range.length % granule != 0) return error.UnalignedPhysicalWrite;
+    };
     if (!std.mem.eql(u8, &p.digest, &model.digest(p.encoded[0 .. p.encoded.len - 32]))) return error.StorageProgramChecksum;
     if (store.vtable.admit_program) |admit| try admit(store.context, p, retained);
     for (std.enums.values(recovery.Record)) |r| if (try store.exists(io, r)) return error.RecoveryDirectoryInUse;
@@ -293,6 +297,10 @@ fn recoverOptions(a: std.mem.Allocator, io: std.Io, disk: device.Device, store: 
     const bytes = try store.read(io, .program, a, programs.MAX_ENCODED_BYTES);
     const p = try programs.decode(a, bytes);
     if (!p.target.same(disk.target)) return error.TransactionTargetMismatch;
+    const granule = @max(disk.target.sector_size, disk.write_granule);
+    for (p.steps, 0..) |_, index| if (p.targetRange(index)) |range| {
+        if (range.offset % granule != 0 or range.length % granule != 0) return error.UnalignedPhysicalWrite;
+    };
     const retained = try checkMarker(io, store, .retained, p.digest, try a.alloc(u8, try store.blockSize(io)));
     if (store.vtable.admit_program) |admit| try admit(store.context, p, retained);
     const slots = try Slots.init(a, p, try store.blockSize(io), retained);

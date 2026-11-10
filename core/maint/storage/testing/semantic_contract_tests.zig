@@ -1,7 +1,7 @@
 //! Common policy is exercised without linking any filesystem representation.
 const std = @import("std");
 const storage = @import("storage");
-const s = storage.semantic;
+const semantic = storage.semantic;
 const model = storage.model;
 const IO = std.testing.io;
 const TARGET: model.Target = .{ .identity = @splat(0x36), .capacity = 8192, .sector_size = 512 };
@@ -9,7 +9,7 @@ const Fake = struct {
     target: model.Target,
     rounds: usize = 0,
     diverge: bool = false,
-    requirements_buffer: [65]s.Requirement = undefined,
+    requirements_buffer: [65]semantic.Requirement = undefined,
     encoded: [512]u8 = @splat(0),
     writes: [1]storage.mutation.Write = undefined,
     fn cast(ctx: *anyopaque) *@This() {
@@ -19,27 +19,27 @@ const Fake = struct {
     fn inspect(ctx: *anyopaque) !model.Snapshot {
         return .{ .target = cast(ctx).target, .filesystem = .ext4, .filesystem_bytes = 8192, .block_size = 512, .generation = 0, .clean = true, .capabilities = &.{.{ .operation = .shrink, .support = .validated }} };
     }
-    fn objects(_: *anyopaque, cursor: *s.Cursor) !?s.Object {
+    fn objects(_: *anyopaque, cursor: *semantic.Cursor) !?semantic.Object {
         if (cursor.index != 0) return null;
         cursor.index += 1;
         return .{ .id = 7, .kind = .metadata, .bytes = 512 };
     }
-    fn allocations(_: *anyopaque, cursor: *s.Cursor) !?s.AllocationUnit {
+    fn allocations(_: *anyopaque, cursor: *semantic.Cursor) !?semantic.AllocationUnit {
         if (cursor.index != 0) return null;
         cursor.index += 1;
         return .{ .id = 1, .owner = 7, .sources = &.{.{ .offset = 4096, .length = 512 }}, .content_bytes = 512 };
     }
-    fn geometry(ctx: *anyopaque, intent: s.Intent) !s.Geometry {
+    fn geometry(ctx: *anyopaque, intent: semantic.Intent) !semantic.Geometry {
         return .{ .bytes = intent.bytes, .allocation_size = 512, .reserved = &.{.{ .offset = 0, .length = 512 }}, .private = ctx };
     }
-    fn requirements(ctx: *anyopaque, _: s.Intent, desired: s.Geometry, placements: []const s.Placement) !s.Requirements {
+    fn requirements(ctx: *anyopaque, _: semantic.Intent, desired: semantic.Geometry, placements: []const semantic.Placement) !semantic.Requirements {
         const self = cast(ctx);
         self.rounds += 1;
         const count = if (self.diverge) @min(self.rounds, 65) else if (placements.len == 0) @as(usize, 1) else 2;
         for (self.requirements_buffer[0..count], 0..) |*requirement, i| requirement.* = .{ .id = i + 1, .bytes = 512, .granule = 512, .alignment = 512, .bounds = .{ .offset = 512, .length = desired.bytes - 512 } };
         return .{ .units = self.requirements_buffer[0..1], .additional = self.requirements_buffer[1..count] };
     }
-    fn encode(ctx: *anyopaque, _: s.Intent, _: s.Geometry, placements: []const s.Placement) !storage.mutation.MutationSet {
+    fn encode(ctx: *anyopaque, _: semantic.Intent, _: semantic.Geometry, placements: []const semantic.Placement) !storage.mutation.MutationSet {
         const self = cast(ctx);
         std.mem.writeInt(u64, self.encoded[0..8], placements[0].ranges[0].offset, .little);
         self.writes[0] = .{ .range = .{ .offset = 0, .length = 512 }, .content = &self.encoded };
@@ -48,11 +48,11 @@ const Fake = struct {
     fn check(_: *anyopaque) !model.Check {
         return .{ .consistent = true, .detail = "fake records" };
     }
-    fn verify(ctx: *anyopaque, _: s.Intent, _: storage.device.Reader) !model.Check {
+    fn verify(ctx: *anyopaque, _: semantic.Intent, _: storage.device.Reader) !model.Check {
         return check(ctx);
     }
-    const OPS: s.FilesystemOps = .{ .close = close, .inspect = inspect, .enumerate_objects = objects, .enumerate_allocations = allocations, .describe_geometry = geometry, .requirements = requirements, .encode_changes = encode, .check = check, .verify = verify };
-    fn filesystem(self: *@This()) s.Filesystem {
+    const OPS: semantic.FilesystemOps = .{ .close = close, .inspect = inspect, .enumerate_objects = objects, .enumerate_allocations = allocations, .describe_geometry = geometry, .requirements = requirements, .encode_changes = encode, .check = check, .verify = verify };
+    fn filesystem(self: *@This()) semantic.Filesystem {
         return .{ .context = self, .vtable = &OPS };
     }
 };

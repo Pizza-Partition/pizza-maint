@@ -48,8 +48,10 @@ jobs:
           JS
       - name: Install image and VM tools
         run: sudo apt-get update && sudo apt-get install -y binutils libarchive-tools systemd-ukify systemd-boot-efi qemu-system-x86
+      - name: Fetch pinned EFI stub
+        run: python3 scripts/fetch-efi-stub.py "$RUNNER_TEMP/linuxx64.efi.stub"
       - name: Build verified maintenance image and protocol
-        run: zig build bundle image uki protocol-package -Doptimize=safe -j4 --summary all
+        run: zig build bundle image uki protocol-package -Duki-stub="$RUNNER_TEMP/linuxx64.efi.stub" -Doptimize=safe -j4 --summary all
       - name: Boot the production maintenance application
         run: |
           zig build test-maintenance -Doptimize=safe -j4 -- --bundle zig-out/runtime/bundle --kernel-version 7.2.11-arch1-1 --timeout 180

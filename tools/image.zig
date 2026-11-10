@@ -60,6 +60,9 @@ pub fn run(
 /// resulting file for native FAT allocation proofs; no boot variables are touched.
 fn buildUki(a: std.mem.Allocator, io: std.Io, environ: *std.process.Environ.Map, directory: []const u8, initrd: []const u8, output: []const u8, ukify: []const u8, stub: []const u8) !void {
     const utils = @import("utils");
+    const lock = try std.json.parseFromSliceLeaky(struct { version: []const u8, url: []const u8, archive_sha256: []const u8, member: []const u8, sha256: []const u8 }, a, @embedFile("efi-stub.json"), .{});
+    const stub_digest = try utils.filesystem.hashFileSha256(a, io, stub);
+    if (!std.mem.eql(u8, stub_digest, lock.sha256)) return error.EfiStubDigestMismatch;
     const kernel = try std.fs.path.join(a, &.{ directory, "vmlinuz" });
     const tool = try utils.process.findExecutable(a, io, environ, ukify);
     _ = try utils.process.checkedOutput(a, io, environ, &.{ tool, "build", "--linux", kernel, "--initrd", initrd, "--cmdline", "console=ttyS0,115200n8 console=tty0 rdinit=/init pizza.kiosk=disable", "--os-release", "ID=pizza\nNAME=\"Pizza Maintenance\"\nVERSION_ID=4\n", "--uname", "7.2.11-arch1-1", "--stub", stub, "--output", output });
@@ -73,7 +76,7 @@ fn buildUki(a: std.mem.Allocator, io: std.Io, environ: *std.process.Environ.Map,
     const zero: [4096]u8 = @splat(0);
     try file.writePositionalAll(io, zero[0..padding], bytes.len);
     try file.sync(io);
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = try a.print("{s}.pizza.json", .{output}), .data = try std.json.Stringify.valueAlloc(a, .{ .version = @as(u16, 1), .kind = "x86_64-uki", .signed = false, .image_sha256 = try utils.filesystem.hashFileSha256(a, io, output), .kernel_sha256 = try utils.filesystem.hashFileSha256(a, io, kernel), .initrd_sha256 = try utils.filesystem.hashFileSha256(a, io, initrd) }, .{ .whitespace = .indent_2 }) });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = try a.print("{s}.pizza.json", .{output}), .data = try std.json.Stringify.valueAlloc(a, .{ .version = @as(u16, 1), .kind = "x86_64-uki", .signed = false, .image_sha256 = try utils.filesystem.hashFileSha256(a, io, output), .stub_sha256 = stub_digest, .kernel_sha256 = try utils.filesystem.hashFileSha256(a, io, kernel), .initrd_sha256 = try utils.filesystem.hashFileSha256(a, io, initrd) }, .{ .whitespace = .indent_2 }) });
 }
 fn validateUki(bytes: []const u8, kernel: []const u8, initrd: []const u8) !void {
     if (bytes.len < 64 or !std.mem.eql(u8, bytes[0..2], "MZ")) return error.InvalidUki;

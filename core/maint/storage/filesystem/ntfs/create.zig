@@ -1,9 +1,9 @@
 //! Native NTFS 3.1 initialization. Allocation is supplied by the common planner.
 const std = @import("std");
-const s = @import("../../semantic.zig");
+const semantic = @import("../../semantic.zig");
 const model = @import("../../model.zig");
 const mutation = @import("../../mutation.zig");
-const c = @import("root.zig").c;
+const c_api = @import("root.zig").c_api;
 extern "c" const attrdef_ntfs3x_array: [2560]u8;
 extern "c" fn init_secure_sds([*]u8) void;
 pub const Geometry = struct { bytes: u64, sector: u32, cluster: u32, record: u32, clusters: u64, bitmap_bytes: u64, sizes: [13]u64, reserved: [2]model.Range };
@@ -27,8 +27,8 @@ pub fn describe(a: std.mem.Allocator, bytes: u64, sector: u32) !*Geometry {
     g.sizes[12] = 8;
     return g;
 }
-pub fn requirements(a: std.mem.Allocator, g: *const Geometry) ![]s.Requirement {
-    var reqs: std.ArrayList(s.Requirement) = .empty;
+pub fn requirements(a: std.mem.Allocator, g: *const Geometry) ![]semantic.Requirement {
+    var reqs: std.ArrayList(semantic.Requirement) = .empty;
     for (g.sizes, 0..) |size, index| {
         if (size == 0) continue;
         const allocated = std.mem.alignForward(u64, size, g.cluster);
@@ -65,7 +65,7 @@ pub fn labelBytes(a: std.mem.Allocator, label: []const u8) ![]u8 {
     }
     return bytes;
 }
-fn location(placements: []const s.Placement, id: u64) !model.Range {
+fn location(placements: []const semantic.Placement, id: u64) !model.Range {
     for (placements) |p| if (p.id == id and p.ranges.len == 1) return p.ranges[0];
     return error.MissingAllocationPlacement;
 }
@@ -126,10 +126,10 @@ const Record = struct {
         const b = try zeros(self.allocator, g.record);
         @memcpy(b[0..4], "FILE");
         put(u16, b, 4, 48);
-        put(u16, b, 6, @intCast(g.record / g.sector + 1));
+        put(u16, b, 6, @intCast(g.record / 512 + 1));
         put(u16, b, 16, @intCast(if (number == 0) 1 else number));
         put(u16, b, 18, if (used and number < 12) 1 else 0);
-        const start = std.mem.alignForward(usize, 48 + (g.record / g.sector + 1) * 2, 8);
+        const start = std.mem.alignForward(usize, 48 + (g.record / 512 + 1) * 2, 8);
         put(u16, b, 20, @intCast(start));
         put(u16, b, 22, if (!used) 0 else if (number == 5 or number == 11) 3 else if (number == 9) 9 else 1);
         put(u32, b, 28, g.record);
@@ -144,7 +144,7 @@ const Record = struct {
         }
         put(u32, b, at, 0xffffffff);
         put(u32, b, 24, @intCast(at + 8));
-        try seal(b, g.sector);
+        try seal(b, 512);
         return b;
     }
 };
@@ -215,7 +215,7 @@ fn securityIndex(a: std.mem.Allocator, data: []const u8, hash_index: bool) ![]u8
     for (entries.items) |e| try all.appendSlice(a, e);
     return indexRoot(a, 0, if (hash_index) 0x12 else 0x10, all.items, false);
 }
-pub fn encode(a: std.mem.Allocator, io: std.Io, target: model.Target, g: *const Geometry, placements: []const s.Placement, partition_offset: u64, label: []const u8) !mutation.MutationSet {
+pub fn encode(a: std.mem.Allocator, io: std.Io, target: model.Target, g: *const Geometry, placements: []const semantic.Placement, partition_offset: u64, label: []const u8) !mutation.MutationSet {
     const volume_label = try labelBytes(a, label);
     defer a.free(volume_label);
     var collector: mutation.Collector = .{ .allocator = a, .target = target };
@@ -231,7 +231,7 @@ pub fn encode(a: std.mem.Allocator, io: std.Io, target: model.Target, g: *const 
     @memcpy(data[9][0x40000..][0..0xfc], data[9][0..0xfc]);
     const upcase = try a.alloc(u16, 65536);
     defer a.free(upcase);
-    c.ntfs_upcase_table_build(upcase.ptr, 65536 * 2);
+    c_api.ntfs_upcase_table_build(upcase.ptr, 65536 * 2);
     @memcpy(data[10], std.mem.sliceAsBytes(upcase));
     const bitmap = data[6];
     for (0..2) |bit| bitmap[0] |= @as(u8, 1) << @intCast(bit);
@@ -249,8 +249,8 @@ pub fn encode(a: std.mem.Allocator, io: std.Io, target: model.Target, g: *const 
     const root_index = data[5];
     @memcpy(root_index[0..4], "INDX");
     put(u16, root_index, 4, 40);
-    put(u16, root_index, 6, @intCast(root_index.len / g.sector + 1));
-    const first = std.mem.alignForward(usize, 40 + (root_index.len / g.sector + 1) * 2, 8);
+    put(u16, root_index, 6, @intCast(root_index.len / 512 + 1));
+    const first = std.mem.alignForward(usize, 40 + (root_index.len / 512 + 1) * 2, 8);
     put(u32, root_index, 24, @intCast(first - 24));
     put(u32, root_index, 32, @intCast(root_index.len - 24));
     var order: [12]usize = undefined;
@@ -274,7 +274,7 @@ pub fn encode(a: std.mem.Allocator, io: std.Io, target: model.Target, g: *const 
     put(u16, root_index, at + 8, 16);
     put(u16, root_index, at + 12, 2);
     put(u32, root_index, 28, @intCast(at + 16 - 24));
-    try seal(root_index, g.sector);
+    try seal(root_index, 512);
     const boot = try zeros(a, 8192);
     @memcpy(boot[0..3], &@as([3]u8, .{ 0xeb, 0x52, 0x90 }));
     @memcpy(boot[3..11], "NTFS    ");

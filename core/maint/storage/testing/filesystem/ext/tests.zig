@@ -84,14 +84,14 @@ test "libext2fs cannot bypass Reader with writes, discard or zeroout, and preser
         defer session.close();
         const channel = session.fs.*.io;
         var buffer: [1024]u8 = @splat(0xAA);
-        try std.testing.expectEqual(0, session.fs.*.flags & ext.c.EXT2_FLAG_RW);
+        try std.testing.expectEqual(0, session.fs.*.flags & ext.c_api.EXT2_FLAG_RW);
         try std.testing.expectEqual(0, channel.*.manager.*.read_blk.?(channel, 1, -1024, &buffer));
-        try std.testing.expectEqual(@as(u16, ext.c.EXT2_SUPER_MAGIC), std.mem.readInt(u16, buffer[0x38..0x3A], .little));
-        try std.testing.expectEqual(ext.c.EXT2_ET_RO_FILSYS, channel.*.manager.*.write_blk.?(channel, 1, 1, &buffer));
-        try std.testing.expectEqual(ext.c.EXT2_ET_RO_FILSYS, channel.*.manager.*.write_blk64.?(channel, 1, 1, &buffer));
-        try std.testing.expectEqual(ext.c.EXT2_ET_RO_FILSYS, channel.*.manager.*.write_byte.?(channel, 1024, 1, &buffer));
-        try std.testing.expectEqual(ext.c.EXT2_ET_RO_FILSYS, ext.c.io_channel_discard(channel, 1, 1));
-        try std.testing.expectEqual(ext.c.EXT2_ET_RO_FILSYS, ext.c.io_channel_zeroout(channel, 1, 1));
+        try std.testing.expectEqual(@as(u16, ext.c_api.EXT2_SUPER_MAGIC), std.mem.readInt(u16, buffer[0x38..0x3A], .little));
+        try std.testing.expectEqual(ext.c_api.EXT2_ET_RO_FILSYS, channel.*.manager.*.write_blk.?(channel, 1, 1, &buffer));
+        try std.testing.expectEqual(ext.c_api.EXT2_ET_RO_FILSYS, channel.*.manager.*.write_blk64.?(channel, 1, 1, &buffer));
+        try std.testing.expectEqual(ext.c_api.EXT2_ET_RO_FILSYS, channel.*.manager.*.write_byte.?(channel, 1024, 1, &buffer));
+        try std.testing.expectEqual(ext.c_api.EXT2_ET_RO_FILSYS, ext.c_api.io_channel_discard(channel, 1, 1));
+        try std.testing.expectEqual(ext.c_api.EXT2_ET_RO_FILSYS, ext.c_api.io_channel_zeroout(channel, 1, 1));
     }
     try std.testing.expectEqualSlices(u8, &before, &try digest(io, image.reader()));
     const Failing = struct {
@@ -135,8 +135,8 @@ test "ext rejects corrupt metadata, dirty state and out-of-bounds geometry witho
     try std.testing.expectError(error.ExtDescriptorChecksum, ext.allocation(a, io, image.reader()));
     try image.file.writePositionalAll(io, &checksum_byte, 2048 + 0x1E);
     const session = try ext.Session.open(a, io, image.reader());
-    const bitmap = ext.c.ext2fs_block_bitmap_loc(session.fs, 0);
-    const inode_bitmap = ext.c.ext2fs_inode_bitmap_loc(session.fs, 0);
+    const bitmap = ext.c_api.ext2fs_block_bitmap_loc(session.fs, 0);
+    const inode_bitmap = ext.c_api.ext2fs_inode_bitmap_loc(session.fs, 0);
     session.close();
     for ([_]u64{ bitmap, inode_bitmap }, 0..) |block, index| {
         var byte: [1]u8 = undefined;
@@ -174,7 +174,7 @@ test "ext allocation repair refuses untrusted bitmaps and healthy repair is a no
     defer directory.close(io);
     try std.testing.expect(!(try storage.testing.executor.execute(a, io, image.backend(), .{ .kind = .repair }, .{ .recovery_directory = directory })).changed);
     const session = try ext.Session.open(a, io, image.reader());
-    const bitmap = ext.c.ext2fs_block_bitmap_loc(session.fs, 0);
+    const bitmap = ext.c_api.ext2fs_block_bitmap_loc(session.fs, 0);
     session.close();
     var byte: [1]u8 = undefined;
     try image.reader().readInto(io, bitmap * 1024, &byte);
@@ -198,10 +198,11 @@ test "native shrink remaps a high directory inode and reseeds its checksums" {
         var builder = storage.mutation.Builder.init(a, image.reader());
         defer builder.deinit();
         const session = try ext.Session.openStaged(a, io, &builder);
-        try session.check(ext.c.ext2fs_read_bitmaps(session.fs));
+        try session.check(ext.c_api.ext2fs_read_bitmaps(session.fs));
         const high = session.fs.*.super.*.s_inodes_count * 3 / 4;
-        try session.check(ext.c.ext2fs_mkdir(session.fs, ext.c.EXT2_ROOT_INO, high, "high_directory"));
-        try session.check(ext.c.ext2fs_flush(session.fs));
+        try session.check(ext.c_api.ext2fs_mkdir(session.fs, ext.c_api.EXT2_ROOT_INO, high, "high_directory"));
+        ext.c_api.ext2fs_r_blocks_count_set(session.fs.*.super, ext.c_api.ext2fs_blocks_count(session.fs.*.super) * 2 / 5);
+        try session.check(ext.c_api.ext2fs_flush(session.fs));
         session.close();
         const changes = try builder.finish(io, false);
         for (changes.writes) |write| try image.file.writePositionalAll(io, write.content, write.range.offset);
@@ -220,7 +221,7 @@ test "native shrink remaps a high directory inode and reseeds its checksums" {
     try command(a, io, &.{ "e2fsck", "-fn", path });
     const session = try ext.Session.open(a, io, image.reader());
     defer session.close();
-    var number: ext.c.ext2_ino_t = 0;
-    try session.check(ext.c.ext2fs_namei(session.fs, ext.c.EXT2_ROOT_INO, ext.c.EXT2_ROOT_INO, "/high_directory", &number));
+    var number: ext.c_api.ext2_ino_t = 0;
+    try session.check(ext.c_api.ext2fs_namei(session.fs, ext.c_api.EXT2_ROOT_INO, ext.c_api.EXT2_ROOT_INO, "/high_directory", &number));
     try std.testing.expect(number > 0 and number < session.fs.*.super.*.s_inodes_count);
 }

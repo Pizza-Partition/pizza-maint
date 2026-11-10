@@ -5,7 +5,7 @@ const device = @import("../../device.zig");
 pub const semantic = @import("semantic.zig");
 pub const format = @import("format.zig");
 pub const bridge = @import("io.zig");
-pub const c = bridge.c;
+pub const c_api = bridge.c_api;
 pub const Session = bridge.Session;
 comptime {
     _ = bridge;

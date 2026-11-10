@@ -2,16 +2,16 @@
 //! aligned struct pointers into untrusted bytes.
 const std = @import("std");
 const Reader = @import("../../device.zig").Reader;
-pub const c = @import("btrfs_c").format;
-pub const SUPER = c.struct_btrfs_super_block;
-pub const HEADER = c.struct_btrfs_header;
-pub const ITEM = c.struct_btrfs_item;
-pub const PTR = c.struct_btrfs_key_ptr;
-pub const CHUNK = c.struct_btrfs_chunk;
-pub const STRIPE = c.struct_btrfs_stripe;
-pub const DEV = c.struct_btrfs_dev_item;
-pub const ROOT = c.struct_btrfs_root_item;
-pub const DEV_EXTENT = c.struct_btrfs_dev_extent;
+pub const c_api = @import("btrfs_c").format;
+pub const SUPER = c_api.struct_btrfs_super_block;
+pub const HEADER = c_api.struct_btrfs_header;
+pub const ITEM = c_api.struct_btrfs_item;
+pub const PTR = c_api.struct_btrfs_key_ptr;
+pub const CHUNK = c_api.struct_btrfs_chunk;
+pub const STRIPE = c_api.struct_btrfs_stripe;
+pub const DEV = c_api.struct_btrfs_dev_item;
+pub const ROOT = c_api.struct_btrfs_root_item;
+pub const DEV_EXTENT = c_api.struct_btrfs_dev_extent;
 pub const MIRRORS = [_]u64{ 64 * 1024, 64 * 1024 * 1024, 256 * 1024 * 1024 * 1024 };
 pub const HEADER_SIZE = @sizeOf(HEADER);
 pub const SUPER_SIZE = @sizeOf(SUPER);

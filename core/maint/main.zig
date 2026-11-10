@@ -7,6 +7,7 @@ const journal = @import("journal");
 const plan_module = @import("maintenance").plan;
 const tui = @import("execution_tui");
 const session = @import("session");
+const filesystem = @import("utils").filesystem;
 var stop_requested: std.atomic.Value(bool) = .init(false);
 fn requestStop(_: std.os.linux.SIG) callconv(.c) void {
     stop_requested.store(true, .monotonic);
@@ -153,7 +154,7 @@ pub fn runWithDevices(init: std.process.Init, devices: @import("maintenance").de
         var directory = try std.Io.Dir.cwd().openDir(init.io, home, .{ .follow_symlinks = false });
         defer directory.close(init.io);
         const kind = try @import("utils").filesystem.filesystemType(directory);
-        if (kind != 0xef53 and kind != 0x58465342 and kind != 0x9123683e) return error.JournalHomeMustBePersistent;
+        if (kind != filesystem.EXT4_SUPER_MAGIC and kind != filesystem.XFS_SUPER_MAGIC and kind != filesystem.BTRFS_SUPER_MAGIC) return error.JournalHomeMustBePersistent;
         const anchor = try journal.captureBoundary(a, init.io, .{ .state = .start, .boot_id = "", .utc_unix_ns = "", .plan_id = actual_plan.id, .home = .{ .kind = .other_device, .path = home, .device_uuid = if (request) |r| r.home.uuid else null, .device_path = if (request) |r| r.home.path else null } });
         const value = try a.create(plan_module.Executor);
         value.* = try plan_module.Executor.start(a, init.io, directory, actual_plan, anchor.boundary, anchor.monotonic_ns, execution_options);

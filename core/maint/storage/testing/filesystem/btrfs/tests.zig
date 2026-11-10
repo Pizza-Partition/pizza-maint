@@ -1,7 +1,7 @@
 const std = @import("std");
 const storage = @import("storage");
 const btrfs = storage.btrfs;
-const f = btrfs.format;
+const format = btrfs.format;
 const REGISTRY = storage.filesystem.BUILTIN;
 const Image = storage.testing.Image;
 const IDENTITY = storage.testing.fixture.IDENTITY;
@@ -90,12 +90,12 @@ test "Btrfs unknown features and dirty log do not expose mutation capability" {
     const path = try fixture.FIXTURES[0].create(a, io, root, fixture.FIXTURES[0].capacity);
     var image = try Image.open(io, path, IDENTITY, 512);
     defer image.close(io);
-    const original = try f.load(io, image.reader());
+    const original = try format.load(io, image.reader());
     for (0..2) |case| {
         var b = original.super;
-        if (case == 0) f.put(f.SUPER, "incompat_flags", &b, original.value("incompat_flags") | (@as(u64, 1) << 63)) else f.put(f.SUPER, "log_root", &b, 4096);
-        try f.seal(original.value("csum_type"), &b);
-        try image.file.writePositionalAll(io, &b, f.MIRRORS[0]);
+        if (case == 0) format.put(format.SUPER, "incompat_flags", &b, original.value("incompat_flags") | (@as(u64, 1) << 63)) else format.put(format.SUPER, "log_root", &b, 4096);
+        try format.seal(original.value("csum_type"), &b);
+        try image.file.writePositionalAll(io, &b, format.MIRRORS[0]);
         const snapshot = try REGISTRY.query(a, io, image.reader());
         for (snapshot.capabilities) |cap| if (cap.operation != .query) try std.testing.expectEqual(storage.model.Support.unavailable, cap.support);
         const before = try tools.digest(io, image.reader());
@@ -113,12 +113,12 @@ test "Btrfs conflicting valid super mirrors cannot be silently repaired" {
     const path = try fixture.FIXTURES[0].create(a, io, root, fixture.FIXTURES[0].capacity);
     var image = try Image.open(io, path, IDENTITY, 512);
     defer image.close(io);
-    const g = try f.load(io, image.reader());
+    const g = try format.load(io, image.reader());
     var b = g.super;
-    f.put(f.SUPER, "bytenr", &b, f.MIRRORS[1]);
-    f.put(f.SUPER, "generation", &b, g.value("generation") + 1);
-    try f.seal(g.value("csum_type"), &b);
-    try image.file.writePositionalAll(io, &b, f.MIRRORS[1]);
+    format.put(format.SUPER, "bytenr", &b, format.MIRRORS[1]);
+    format.put(format.SUPER, "generation", &b, g.value("generation") + 1);
+    try format.seal(g.value("csum_type"), &b);
+    try image.file.writePositionalAll(io, &b, format.MIRRORS[1]);
     const before = try tools.digest(io, image.reader());
     try std.testing.expectError(error.BtrfsAmbiguousSuper, storage.testing.executor.prepare(REGISTRY, a, io, image.reader(), .{ .kind = .repair }));
     try std.testing.expectEqualSlices(u8, &before, &try tools.digest(io, image.reader()));
@@ -146,7 +146,7 @@ test "Btrfs relocation preserves compressed Unicode subvolumes and multi-level t
     const graph = try btrfs.scan.load(a, io, image.reader(), true);
     var multilevel = false;
     var iterator = graph.nodes.valueIterator();
-    while (iterator.next()) |node| if (f.get(f.HEADER, "level", node.bytes) != 0) {
+    while (iterator.next()) |node| if (format.get(format.HEADER, "level", node.bytes) != 0) {
         multilevel = true;
     };
     try std.testing.expect(multilevel);
@@ -172,8 +172,8 @@ test "Btrfs valid checksum does not hide an invalid parent generation" {
     defer image.close(io);
     var graph = try btrfs.scan.load(a, io, image.reader(), true);
     const node = try graph.node(graph.geometry.value("root"));
-    f.put(f.HEADER, "generation", node.bytes, graph.geometry.value("generation") + 1);
-    try f.seal(graph.geometry.value("csum_type"), node.bytes);
+    format.put(format.HEADER, "generation", node.bytes, graph.geometry.value("generation") + 1);
+    try format.seal(graph.geometry.value("csum_type"), node.bytes);
     try image.file.writePositionalAll(io, node.bytes, try graph.physical(node.logical, node.bytes.len));
     const before = try tools.digest(io, image.reader());
     const result = try REGISTRY.check(a, io, image.reader());

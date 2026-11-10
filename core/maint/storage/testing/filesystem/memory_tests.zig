@@ -1,8 +1,8 @@
 //! Memory policy acceptance uses the test executor, regular images and oracles.
 const std = @import("std");
 const storage = @import("storage");
-const m = storage.memory;
-const MiB = m.MI_B;
+const memory = storage.memory;
+const MiB = memory.MI_B;
 const Image = storage.testing.Image;
 const tools = storage.testing.tools;
 const REGISTRY = storage.filesystem.BUILTIN;
@@ -25,7 +25,7 @@ fn recovery(a: std.mem.Allocator, root: []const u8) !std.Io.Dir {
     try std.Io.Dir.cwd().createDir(std.testing.io, path, .default_dir);
     return std.Io.Dir.cwd().openDir(std.testing.io, path, .{});
 }
-fn assertWithinBudget(e: m.Evidence) !void {
+fn assertWithinBudget(e: memory.Evidence) !void {
     try std.testing.expect(e.checks > 1);
     try std.testing.expect(!e.violated);
     try std.testing.expect(e.minimum_available >= e.reserve);
@@ -57,7 +57,7 @@ test "budgeted test executor clones a real 128 MiB volume while preserving the s
     var dir = try recovery(a, root);
     defer dir.close(io);
     const before = try tools.digest(io, source.reader());
-    var evidence: m.Evidence = undefined;
+    var evidence: memory.Evidence = undefined;
     const options: storage.testing.executor.ExecutionOptions = .{ .recovery_directory = dir, .memory_options = .{ .policy = .{ .cache_cap = 32 * MiB }, .evidence = &evidence } };
     try std.testing.expect((try storage.testing.executor.copy(a, io, source.reader(), target.backend(), options)).changed);
     try assertWithinBudget(evidence);
@@ -91,7 +91,7 @@ test "memory denial leaves destination untouched and pressure after a write rema
     var dir = try recovery(a, root);
     defer dir.close(io);
     const before = try tools.digest(io, target.reader());
-    var evidence: m.Evidence = undefined;
+    var evidence: memory.Evidence = undefined;
     try std.testing.expectError(error.MemoryBudgetExceeded, storage.testing.executor.copy(a, io, source.reader(), target.backend(), .{ .recovery_directory = dir, .memory_options = .{ .policy = .{ .cache_cap = 4096 }, .evidence = &evidence } }));
     try assertWithinBudget(evidence);
     try std.testing.expectEqualSlices(u8, &before, &try tools.digest(io, target.reader()));
@@ -100,7 +100,7 @@ test "memory denial leaves destination untouched and pressure after a write rema
         disk: storage.device.Device,
         writes: usize = 0,
         pressure: bool = false,
-        fn sample(context: *const anyopaque, _: std.Io) !m.linux.Snapshot {
+        fn sample(context: *const anyopaque, _: std.Io) !memory.linux.Snapshot {
             const self: *const @This() = @ptrCast(@alignCast(context));
             const total = 8 * 1024 * MiB;
             const available: u64 = if (self.pressure) total / 10 - 1 else 6 * 1024 * MiB;

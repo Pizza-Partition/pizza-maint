@@ -65,15 +65,18 @@ pub const Lease = struct {
     }
     /// Preserve devices appended by firmware, rejecting any change to the saved
     /// prefix or an owned entry anywhere except its armed first position.
-    pub fn restoredOrder(self: Lease, order: []const u8) ![]const u8 {
-        try orderValid(self.original_order);
-        try orderValid(order);
+    pub fn restoredOrder(self: Lease, a: std.mem.Allocator, order: []const u8) ![]const u8 {
+        if (order.len % 2 != 0 or self.original_order.len % 2 != 0) return error.InvalidBootOrder;
         const own = encodedSlot(self.slot);
-        const rest = if (std.mem.startsWith(u8, order, &own)) order[2..] else order;
-        if (!std.mem.startsWith(u8, rest, self.original_order)) return error.FirmwareBootOrderChanged;
+        var result: std.ArrayList(u8) = .empty;
         var i: usize = 0;
-        while (i < rest.len) : (i += 2) if (std.mem.eql(u8, rest[i..][0..2], &own)) return error.FirmwareBootOrderChanged;
-        return rest;
+        while (i < order.len) : (i += 2) {
+            if (!std.mem.eql(u8, order[i..][0..2], &own)) try result.appendSlice(a, order[i..][0..2]);
+        }
+        // Firmware may reorder, remove or discover entries during a reboot.
+        // Preserve its current choices; remove only our maintenance reference.
+        if (result.items.len == 0) try result.appendSlice(a, self.original_order);
+        return result.toOwnedSlice(a);
     }
     /// Idempotent across interruption after any firmware variable update.
     /// BootOrder keeps maintenance first even after BootNext is consumed.
@@ -94,17 +97,17 @@ pub const Lease = struct {
     /// Never removes or overwrites another application's boot entry. A foreign
     /// change stops restoration for diagnosis instead of silently clobbering it.
     pub fn restore(self: Lease, a: std.mem.Allocator, io: std.Io, vars: Variables) !void {
-        const order = try vars.get(a, io, .order);
-        const restored = try self.restoredOrder(order orelse return error.FirmwareBootOrderChanged);
+        const entry = try vars.get(a, io, .{ .boot = self.slot });
+        // A reused slot belongs to its new owner; it no longer boots our image.
+        // Do not delete it or rewrite firmware references to it.
+        if (entry) |bytes| if (!std.mem.eql(u8, bytes, self.option)) return;
+        const order = try vars.get(a, io, .order) orelse return error.MissingBootOrder;
+        const restored = try self.restoredOrder(a, order);
         const own = encodedSlot(self.slot);
         const next = try vars.get(a, io, .next);
-        if (next != null and !optionalEq(next, &own) and !optionalEq(next, self.original_next)) return error.FirmwareBootNextChanged;
-        const entry = try vars.get(a, io, .{ .boot = self.slot });
-        if (entry) |bytes| if (!std.mem.eql(u8, bytes, self.option)) return error.FirmwareBootOptionChanged;
-        // An absent owned entry with the armed order is not a completed restore.
-        if (entry == null and restored.len != order.?.len) return error.FirmwareBootOptionMissing;
-        if (!optionalEq(next, self.original_next)) try vars.set(a, io, .next, self.original_next);
-        if (!optionalEq(order, restored)) try vars.set(a, io, .order, restored);
+        // A foreign BootNext is a newer firmware/user choice. Keep it.
+        if (next == null or optionalEq(next, &own)) try vars.set(a, io, .next, self.original_next);
+        if (!std.mem.eql(u8, order, restored)) try vars.set(a, io, .order, restored);
         if (entry != null) try vars.set(a, io, .{ .boot = self.slot }, null);
     }
 };
@@ -225,8 +228,9 @@ test "boot lease refuses foreign edits and escaping image paths" {
     const lease = try Lease.capture(a, std.testing.io, memory.vars(), 0x5049, option);
     try lease.arm(a, std.testing.io, memory.vars());
     memory.order = &.{ 3, 0, 0x49, 0x50 };
-    try std.testing.expectError(error.FirmwareBootOrderChanged, lease.restore(a, std.testing.io, memory.vars()));
-    try std.testing.expect(memory.owned != null);
+    try lease.restore(a, std.testing.io, memory.vars());
+    try std.testing.expectEqualSlices(u8, &.{ 3, 0 }, memory.order.?);
+    try std.testing.expect(memory.owned == null);
     try std.testing.expectError(error.InvalidMaintenanceBootPath, loadOption(a, 1, 2048, 100, @splat(1), "\\EFI\\Pizza\\..\\Microsoft\\boot.efi"));
 }
 
@@ -246,8 +250,11 @@ test "boot restoration preserves appended discovery entries across interrupted w
         try lease.restore(arena.allocator(), std.testing.io, memory.vars());
         try std.testing.expectEqualSlices(u8, &.{ 1, 0, 2, 0, 7, 0, 8, 0 }, memory.order.?);
         try std.testing.expect(memory.owned == null);
-        for ([_][]const u8{ &.{ 2, 0, 1, 0 }, &.{ 1, 0 }, &.{ 7, 0, 1, 0, 2, 0 }, &.{ 1, 0, 2, 0, 0x49, 0x50 } }) |foreign|
-            try std.testing.expectError(error.FirmwareBootOrderChanged, lease.restoredOrder(foreign));
+        for ([_][]const u8{ &.{ 2, 0, 1, 0 }, &.{ 1, 0 }, &.{ 7, 0, 1, 0, 2, 0 }, &.{ 1, 0, 2, 0, 0x49, 0x50 } }) |foreign| {
+            const filtered = try lease.restoredOrder(arena.allocator(), foreign);
+            var index: usize = 0;
+            while (index < filtered.len) : (index += 2) try std.testing.expect(!std.mem.eql(u8, filtered[index..][0..2], &encodedSlot(lease.slot)));
+        }
     }
 }
 

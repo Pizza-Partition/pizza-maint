@@ -1,12 +1,12 @@
 //! Native NTFS runlist transformation behind the shared filesystem vtable.
 const std = @import("std");
-const s = @import("../../semantic.zig");
+const semantic = @import("../../semantic.zig");
 const model = @import("../../model.zig");
 const device = @import("../../device.zig");
 const mutation = @import("../../mutation.zig");
 const root = @import("root.zig");
-const c = root.c;
-const f = @import("format.zig");
+const c_api = root.c_api;
+const format = @import("format.zig");
 const create = @import("create.zig");
 const BITMAP_ID = std.math.maxInt(u64);
 const Run = struct { vcn: u64, length: u64, lcn: ?u64, unit: ?u64 = null };
@@ -16,11 +16,11 @@ const State = struct {
     io: std.Io,
     reader: device.Reader,
     snapshot: model.Snapshot,
-    geometry: ?f.Geometry = null,
+    geometry: ?format.Geometry = null,
     session: ?*root.Session = null,
     records: []u8 = &.{},
     attributes: []Attribute = &.{},
-    units: []s.AllocationUnit = &.{},
+    units: []semantic.AllocationUnit = &.{},
     desired_bytes: u64 = 0,
     loaded: bool = false,
     fn cast(ctx: *anyopaque) *@This() {
@@ -28,7 +28,7 @@ const State = struct {
     }
     fn load(self: *@This(), repair: bool) !void {
         if (self.loaded) return;
-        const g = try f.load(self.io, self.reader);
+        const g = try format.load(self.io, self.reader);
         self.geometry = g;
         const session = try root.Session.open(self.a, self.io, self.reader, null);
         self.session = session;
@@ -39,9 +39,9 @@ const State = struct {
         if (length < 12 * g.record or length > 64 * 1024 * 1024 or @rem(length, g.record) != 0) return error.NtfsResourceLimit;
         self.records = try self.a.alloc(u8, @intCast(length));
         const count = @divExact(length, g.record);
-        if (c.ntfs_attr_mst_pread(vol.mft_na, 0, count, g.record, self.records.ptr) != count) return error.NtfsInvalidMetadata;
+        if (c_api.ntfs_attr_mst_pread(vol.mft_na, 0, count, g.record, self.records.ptr) != count) return error.NtfsInvalidMetadata;
         var attributes: std.ArrayList(Attribute) = .empty;
-        var units: std.ArrayList(s.AllocationUnit) = .empty;
+        var units: std.ArrayList(semantic.AllocationUnit) = .empty;
         const clusters = (self.desired_bytes - g.sector) / g.cluster;
         for (0..@intCast(count)) |index| {
             const record = self.records[index * g.record ..][0..g.record];
@@ -105,7 +105,7 @@ const State = struct {
         };
         for (@intCast(old_clusters)..expected.len * 8) |bit| expected[bit / 8] |= @as(u8, 1) << @intCast(bit % 8);
         const observed = try self.a.alloc(u8, expected.len);
-        if (vol.lcnbmp_na.*.data_size < expected.len or c.ntfs_attr_pread(vol.lcnbmp_na, 0, @intCast(observed.len), observed.ptr) != observed.len) return error.NtfsInvalidBitmap;
+        if (vol.lcnbmp_na.*.data_size < expected.len or c_api.ntfs_attr_pread(vol.lcnbmp_na, 0, @intCast(observed.len), observed.ptr) != observed.len) return error.NtfsInvalidBitmap;
         if (!std.mem.eql(u8, expected, observed)) return error.NtfsBitmapMismatch;
         self.loaded = true;
     }
@@ -182,8 +182,8 @@ fn encodeRuns(a: std.mem.Allocator, runs: []const Run) ![]u8 {
     return bytes.toOwnedSlice(a);
 }
 const IDENTITY: u8 = 0;
-pub const DRIVER: s.Driver = .{ .filesystem = .ntfs, .context = &IDENTITY, .operations = &root.OPERATIONS, .vtable = &.{ .probe = root.probe, .open = open } };
-fn open(_: *const anyopaque, a: std.mem.Allocator, io: std.Io, reader: device.Reader, blank: bool) !s.Filesystem {
+pub const DRIVER: semantic.Driver = .{ .filesystem = .ntfs, .context = &IDENTITY, .operations = &root.OPERATIONS, .vtable = &.{ .probe = root.probe, .open = open } };
+fn open(_: *const anyopaque, a: std.mem.Allocator, io: std.Io, reader: device.Reader, blank: bool) !semantic.Filesystem {
     const snapshot: model.Snapshot = if (blank) .{ .filesystem = .ntfs, .target = reader.target, .generation = 0, .block_size = 4096, .filesystem_bytes = 0, .clean = true, .capabilities = &root.OPERATIONS } else try root.inspect(&IDENTITY, a, io, reader);
     const state = try a.create(State);
     state.* = .{ .a = a, .io = io, .reader = reader, .snapshot = snapshot };
@@ -197,7 +197,7 @@ fn close(ctx: *anyopaque) void {
 fn inspect(ctx: *anyopaque) !model.Snapshot {
     return State.cast(ctx).snapshot;
 }
-fn object(ctx: *anyopaque, cursor: *s.Cursor) !?s.Object {
+fn object(ctx: *anyopaque, cursor: *semantic.Cursor) !?semantic.Object {
     const state = State.cast(ctx);
     if (!state.loaded) _ = try geometry(ctx, .{ .operation = .query });
     const g = state.geometry.?;
@@ -214,7 +214,7 @@ fn object(ctx: *anyopaque, cursor: *s.Cursor) !?s.Object {
     }
     return null;
 }
-fn allocation(ctx: *anyopaque, cursor: *s.Cursor) !?s.AllocationUnit {
+fn allocation(ctx: *anyopaque, cursor: *semantic.Cursor) !?semantic.AllocationUnit {
     const state = State.cast(ctx);
     if (state.snapshot.filesystem_bytes == 0) return null;
     if (!state.loaded) _ = try geometry(ctx, .{ .operation = .query });
@@ -223,7 +223,7 @@ fn allocation(ctx: *anyopaque, cursor: *s.Cursor) !?s.AllocationUnit {
     cursor.index += 1;
     return result;
 }
-fn geometry(ctx: *anyopaque, intent: s.Intent) !s.Geometry {
+fn geometry(ctx: *anyopaque, intent: semantic.Intent) !semantic.Geometry {
     const state = State.cast(ctx);
     const bytes = if (intent.operation == .grow or intent.operation == .shrink) intent.bytes else if (intent.operation == .create) state.reader.target.capacity else state.snapshot.filesystem_bytes;
     if (bytes < 16 * 1024 * 1024 or bytes > state.reader.target.capacity or bytes % state.reader.target.sector_size != 0) return error.NtfsInvalidResizeSize;
@@ -242,22 +242,22 @@ fn geometry(ctx: *anyopaque, intent: s.Intent) !s.Geometry {
     for (state.units) |unit| if (!unit.movable and unit.owner == 8) try reserved.appendSlice(state.a, unit.sources);
     return .{ .bytes = bytes, .allocation_size = g.cluster, .reserved = try reserved.toOwnedSlice(state.a), .private = &state.geometry.? };
 }
-fn requirements(ctx: *anyopaque, intent: s.Intent, desired: s.Geometry, _: []const s.Placement) !s.Requirements {
+fn requirements(ctx: *anyopaque, intent: semantic.Intent, desired: semantic.Geometry, _: []const semantic.Placement) !semantic.Requirements {
     const state = State.cast(ctx);
     if (intent.operation == .create) return .{ .units = &.{}, .additional = try create.requirements(state.a, @ptrCast(@alignCast(desired.private))) };
     if (intent.operation == .repair) return .{ .units = &.{} };
     const g = state.geometry.?;
-    const list = try state.a.alloc(s.Requirement, state.units.len - 1);
+    const list = try state.a.alloc(semantic.Requirement, state.units.len - 1);
     for (state.units[0 .. state.units.len - 1], list) |unit, *r| r.* = .{ .id = unit.id, .bytes = unit.content_bytes, .granule = unit.content_bytes, .alignment = g.cluster, .bounds = .{ .offset = 0, .length = (desired.bytes - g.sector) / g.cluster * g.cluster }, .fixed = !unit.movable };
     const bitmap_bytes = std.mem.alignForward(u64, try std.math.divCeil(u64, (desired.bytes - g.sector) / g.cluster, 8), 8);
     const bytes = std.mem.alignForward(u64, bitmap_bytes, g.cluster);
-    return .{ .units = list, .additional = try state.a.dupe(s.Requirement, &.{.{ .id = BITMAP_ID, .bytes = bytes, .granule = bytes, .alignment = g.cluster, .bounds = .{ .offset = 0, .length = (desired.bytes - g.sector) / g.cluster * g.cluster } }}) };
+    return .{ .units = list, .additional = try state.a.dupe(semantic.Requirement, &.{.{ .id = BITMAP_ID, .bytes = bytes, .granule = bytes, .alignment = g.cluster, .bounds = .{ .offset = 0, .length = (desired.bytes - g.sector) / g.cluster * g.cluster } }}) };
 }
-fn find(placements: []const s.Placement, id: u64) !s.Placement {
+fn find(placements: []const semantic.Placement, id: u64) !semantic.Placement {
     for (placements) |p| if (p.id == id) return p;
     return error.MissingAllocationPlacement;
 }
-fn relocated(a: std.mem.Allocator, attr: Attribute, placements: []const s.Placement, g: f.Geometry, bytes: u64) ![]Run {
+fn relocated(a: std.mem.Allocator, attr: Attribute, placements: []const semantic.Placement, g: format.Geometry, bytes: u64) ![]Run {
     if (attr.bitmap) {
         const p = try find(placements, BITMAP_ID);
         const runs = try a.alloc(Run, p.ranges.len);
@@ -316,7 +316,7 @@ fn writeLogical(collector: *mutation.Collector, runs: []const Run, cluster: u32,
     }
     if (done != bytes.len) return error.NtfsIncompleteMetadata;
 }
-fn encode(ctx: *anyopaque, intent: s.Intent, desired: s.Geometry, placements: []const s.Placement) !mutation.MutationSet {
+fn encode(ctx: *anyopaque, intent: semantic.Intent, desired: semantic.Geometry, placements: []const semantic.Placement) !mutation.MutationSet {
     const state = State.cast(ctx);
     if (intent.operation == .create) return create.encode(state.a, state.io, state.reader.target, @ptrCast(@alignCast(desired.private)), placements, intent.partition_offset, intent.label);
     if (intent.operation == .repair) {
@@ -410,9 +410,9 @@ fn encode(ctx: *anyopaque, intent: s.Intent, desired: s.Geometry, placements: []
     if (mirrored > records.len) return error.NtfsInvalidMetadata;
     try writeLogical(&collector, mirror_runs.items, g.cluster, records[0..mirrored]);
     const boot = try state.reader.read(state.a, state.io, .{ .offset = 0, .length = g.sector });
-    f.put64(boot, 40, desired.bytes / g.sector - 1);
-    f.put64(boot, 48, boot_mft orelse return error.NtfsMissingMft);
-    f.put64(boot, 56, boot_mirror orelse return error.NtfsMissingMirror);
+    format.put64(boot, 40, desired.bytes / g.sector - 1);
+    format.put64(boot, 48, boot_mft orelse return error.NtfsMissingMft);
+    format.put64(boot, 56, boot_mirror orelse return error.NtfsMissingMirror);
     const hidden = intent.partition_offset / g.sector;
     if (hidden > std.math.maxInt(u32)) return error.NtfsPartitionOffsetOverflow;
     put(u32, boot, 28, @intCast(hidden));
@@ -428,7 +428,7 @@ fn check(ctx: *anyopaque) !model.Check {
     }
     return root.check(&IDENTITY, state.a, state.io, state.reader);
 }
-fn verify(ctx: *anyopaque, intent: s.Intent, reader: device.Reader) !model.Check {
+fn verify(ctx: *anyopaque, intent: semantic.Intent, reader: device.Reader) !model.Check {
     const state = State.cast(ctx);
     if (state.session) |session| {
         session.close();
@@ -439,7 +439,7 @@ fn verify(ctx: *anyopaque, intent: s.Intent, reader: device.Reader) !model.Check
     if (intent.operation == .create) {
         const expected = try create.labelBytes(state.a, intent.label);
         defer state.a.free(expected);
-        const g = try f.load(state.io, reader);
+        const g = try format.load(state.io, reader);
         var label_state: State = .{ .a = state.a, .io = state.io, .reader = reader, .desired_bytes = g.bytes, .snapshot = snapshot };
         defer if (label_state.session) |session| session.close();
         try label_state.load(false);
@@ -452,14 +452,14 @@ fn verify(ctx: *anyopaque, intent: s.Intent, reader: device.Reader) !model.Check
         } else false;
         if (!matches) return .{ .consistent = false, .detail = "NTFS volume label mismatch", .scope = .allocation_metadata };
     }
-    try s.requireCapability(snapshot, .check);
+    try semantic.requireCapability(snapshot, .check);
     return root.check(&IDENTITY, state.a, state.io, reader);
 }
-const OPS: s.FilesystemOps = .{ .close = close, .inspect = inspect, .enumerate_objects = object, .enumerate_allocations = allocation, .describe_geometry = geometry, .requirements = requirements, .encode_changes = encode, .check = check, .verify = verify };
+const OPS: semantic.FilesystemOps = .{ .close = close, .inspect = inspect, .enumerate_objects = object, .enumerate_allocations = allocation, .describe_geometry = geometry, .requirements = requirements, .encode_changes = encode, .check = check, .verify = verify };
 
 /// Native allocation check; libntfs supplies bounded reads and MST decoding.
 pub fn validate(a: std.mem.Allocator, io: std.Io, reader: device.Reader, repair: bool) !void {
-    const g = try f.load(io, reader);
+    const g = try format.load(io, reader);
     var state: State = .{ .a = a, .io = io, .reader = reader, .desired_bytes = g.bytes, .snapshot = .{ .filesystem = .ntfs, .target = reader.target, .generation = 0, .block_size = g.cluster, .filesystem_bytes = g.bytes, .clean = true } };
     defer if (state.session) |session| session.close();
     try state.load(repair);

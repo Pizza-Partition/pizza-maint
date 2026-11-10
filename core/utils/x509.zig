@@ -2,8 +2,8 @@
 //! Supports certificates with extensions and no unique-ID fields; this is not a full PKIX validator.
 //! Parsing does not establish trust; callers choose trusted issuers and certificate policies.
 const std = @import("std");
-const e = @import("asn1.zig");
-const Der = e.Element;
+const asn1 = @import("asn1.zig");
+const Der = asn1.Element;
 const P256 = std.crypto.sign.ecdsa.EcdsaP256Sha256;
 const P384 = std.crypto.sign.ecdsa.EcdsaP384Sha384;
 
