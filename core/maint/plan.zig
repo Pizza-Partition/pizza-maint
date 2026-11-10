@@ -75,14 +75,16 @@ const Work = struct {
             self.error_value = err;
             if (self.recovery_admitted) if (self.target) |*target| {
                 self.phase.store(2, .release);
-                const result = storage.program_executor.recover(std.heap.page_allocator, self.io, target.backend(), self.files.store(), null) catch |restore_error| {
+                var recovery_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+                defer recovery_arena.deinit();
+                const result = storage.program_executor.recover(recovery_arena.allocator(), self.io, target.backend(), self.files.store(), null) catch |restore_error| {
                     std.log.err("Rollback failed after {t}: {t}", .{ err, restore_error });
                     self.status.store(@backingInt(proto.wire.ExecutionStatus.degraded), .release);
                     return;
                 };
                 if (result == .committed) {
                     target.refreshLayout() catch |refresh_error| {
-                        self.error_value = refresh_error;
+                        std.log.err("Layout refresh failed after {t}: {t}", .{ err, refresh_error });
                         self.status.store(@backingInt(proto.wire.ExecutionStatus.degraded), .release);
                         return;
                     };

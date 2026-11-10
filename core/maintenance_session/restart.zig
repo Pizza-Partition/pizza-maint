@@ -64,7 +64,7 @@ fn devicePath(a: std.mem.Allocator, io: std.Io, expected: storage.model.Digest) 
         if (entry.name.len == 0 or entry.name.len > 128 or std.mem.indexOfScalar(u8, entry.name, '/') != null) continue;
         const candidate = try a.print("/dev/{s}", .{entry.name});
         var block = storage.block_device.BlockDevice.open(a, io, candidate, null, null, .probe) catch |err| switch (err) {
-            error.MissingDeviceIdentity, error.InvalidWwid, error.UnsupportedDeviceIdentity, error.StableDeviceIdentityUnavailable => continue,
+            error.ComplexBlockDeviceUnsupported, error.StableDeviceIdentityUnavailable => continue,
             else => return err,
         };
         defer block.close(io);
