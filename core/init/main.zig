@@ -24,8 +24,8 @@ fn panicImpl(message: []const u8, return_addr: ?usize) noreturn {
     recovery.run(.rescue, .{});
 }
 
-/// RAM-only PID 1. Fatal failures request controlled reboot; unsuccessful
-/// shutdown enters a supervised rescue console without retrying the plan.
+/// RAM-only PID 1. Fatal failures enter a supervised rescue console.
+/// Successful application exit requests controlled reboot without replaying a plan.
 pub fn main(init: std.process.Init) !void {
     if (linux.getpid() != 1) return error.NotPid1;
     supervisor.installSignals() catch |err| fail(err);
@@ -133,7 +133,8 @@ fn run(allocator: std.mem.Allocator, io: std.Io) !void {
                 try power.poweroff();
             }
             if (child.pid == application) {
-                std.log.err("PIZZA_INIT_APPLICATION_EXITED: status={d}; controlled reboot; no automatic plan retry", .{child.status});
+                std.log.info("PIZZA_INIT_APPLICATION_EXITED: status={d}", .{child.status});
+                if (child.status != 0) fail(error.MaintenanceApplicationFailed);
                 recovery.shutdown(.reboot);
             } else std.log.info("Adopted child {d} exited: {d}", .{ child.pid, child.status });
         }
