@@ -79,8 +79,9 @@ fn hardwareText(a: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, path: []const
         else => return err,
     };
     defer file.close(io);
-    // Optional VPD attributes can return ENXIO. Zig's generic file reader treats
-    // this as unexpected errno and emits a stack trace even when caught.
+    // Optional SCSI VPD attributes return EINVAL when the device does not
+    // supply the requested page, or ENXIO when no serial is available.
+    // Neither grants an identity; discovery must continue to other sources.
     const buffer = try a.alloc(u8, 4096);
     while (true) {
         const result = linux.read(file.handle, buffer.ptr, buffer.len);
@@ -91,7 +92,7 @@ fn hardwareText(a: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, path: []const
                 return if (value.len == 0) null else value;
             },
             .INTR => continue,
-            .NXIO, .IO, .NODEV, .ACCES, .PERM => return null,
+            .NXIO, .INVAL, .IO, .NODEV, .ACCES, .PERM => return null,
             else => return error.HardwareIdentityReadFailed,
         }
     }

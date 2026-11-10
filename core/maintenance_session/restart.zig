@@ -231,7 +231,13 @@ pub fn run(a: std.mem.Allocator, io: std.Io) !void {
     };
     const fresh = prior == null;
     try loaded.admit(a, io, vars, &block, fresh);
-    var session = prior orelse try storage.maintenance_session.Session.prepare(a, io, block.backend(), loaded.compiled.bundle);
+    // The probe above captured a backend before authenticated write admission.
+    // Reopen after admission so resumed undo/recovery receives the same granted
+    // capability as a freshly prepared session, rather than the read-only copy.
+    var session = if (fresh)
+        try storage.maintenance_session.Session.prepare(a, io, block.backend(), loaded.compiled.bundle)
+    else
+        try storage.maintenance_session.Session.open(a, io, block.backend(), loaded.compiled.bundle);
     if (!fresh) try session.recover(io);
     if (session.phase == .prepared or session.phase == .initialized) {
         if (!fresh) _ = try choice(io, "Recovered session. Press C then Enter to continue the approved plan.\n", "c");

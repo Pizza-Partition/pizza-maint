@@ -17,3 +17,10 @@ The review identified defects as well as architectural suggestions and hardware-
 Release dependency: pizza-bundle v0.5.1, with the exact commit and asset digests recorded in config/bundle/release.json. Release CI remains the gate for published artifacts, including production application QEMU boot tests.
 
 The review's proposed wholesale namespace changes and protocol extraction are architectural follow-up work. They are not prerequisites for these fixes and are not claimed as completed. Real firmware, Windows sparse-GPT and power-loss behavior still need physical hardware acceptance; image, fault-injection and VM results do not establish those hardware guarantees.
+
+Full reboot acceptance follow-up (v0.5.3): optional SCSI VPD WWID reads may
+return EINVAL when the page is unsupported. This now behaves as unavailable
+identity evidence, without suppressing other discovery errors. Restart recovery
+reopens the session after authenticated device admission, so undo and cleanup
+use the granted write capability instead of a backend copied during probing.
+Both defects were reproduced by the desktop's full UEFI reboot matrix.
