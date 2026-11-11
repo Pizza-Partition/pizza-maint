@@ -39,8 +39,8 @@ Python。维护会话验收生成临时普通镜像，再在独立进程中调�
 
 `protocol/contract.json` 是唯一 wire 协议来源，当前版本 v4。
 `zig build proto` 更新 Zig、JavaScript 和 TypeScript 绑定，`check-proto` 检查漂移。
-`protocol-package` 输出 `zig-out/share/pizza/protocol` 和可供 `zig fetch --save=pizza_protocol` 消费的 `zig-out/share/pizza/pizza-protocol-4.0.0.tar.gz`。归档包含 README、绑定与内容哈希清单；文件顺序、权限和时间戳固定。
-协议包发布于 https://github.com/Pizza-Partition/pizza-protocol；v4.0.0 的 release 归档由本导出入口生成，桌面仓库通过 `zig fetch` 固定发布 URL 和包哈希。
+`protocol-package` 输出 `zig-out/share/pizza/protocol` 和可供 `zig fetch --save=pizza_protocol` 消费的 `zig-out/share/pizza/pizza-protocol-4.0.1.tar.gz`。归档包含 README、绑定与内容哈希清单；文件顺序、权限和时间戳固定。
+协议源码由本仓库的 `protocol/` 统一维护，随维护包一起导出。桌面仓库通过 `zig fetch` 固定维护包的发布 URL 和包哈希，并直接使用包内的同版协议源码。
 桌面仓库只消费该包和维护发布产物，不链接本仓库的 storage。
 协议版本不兼容直接拒绝；恢复日志格式版本独立管理。
 终态返回通过 Loaded.finish 发布有界 CompletionReceipt 并读回核对，失败则保留维护启动。
