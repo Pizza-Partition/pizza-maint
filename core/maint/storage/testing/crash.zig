@@ -1,4 +1,5 @@
 //! Host-only destructive-process acceptance. All targets are temporary files.
+pub const enable_storage_test_support = true;
 const std = @import("std");
 const storage = @import("storage");
 const model = storage.model;
