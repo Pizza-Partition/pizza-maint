@@ -28,8 +28,8 @@ const Backing = struct {
     }
 };
 fn verifyPayload(a: std.mem.Allocator, io: std.Io, reader: storage.device.Reader, range: storage.model.Range, expected: []const u8) !void {
-    var builder = storage.program.Builder.init(a, reader);
-    var view: storage.program.Builder.View = .{ .builder = &builder, .version = 0, .range = range };
+    var builder = storage.program.PhysicalProgramBuilder.init(a, reader);
+    var view: storage.program.PhysicalProgramBuilder.View = .{ .builder = &builder, .version = 0, .range = range };
     const loaded = try fat.scan.load(a, io, view.reader(), false);
     const g = loaded.graph.geometry;
     const root = loaded.graph.objects.items[0];
@@ -64,8 +64,8 @@ test "tail bootstrap preserves relocated file blocks through undo or accepted cl
         const created = try storage.service.layoutWithFormats(a, io, backing.reader(), &.{ esp, data }, &.{.{ .partition_id = data.id, .driver = try storage.filesystem.BUILTIN.get(.vfat) }});
         try backing.seed(created.program);
         try std.testing.expect(try created.verify(a, io, backing.reader()));
-        var source = storage.program.Builder.init(a, backing.reader());
-        var view: storage.program.Builder.View = .{ .builder = &source, .version = 0, .range = data.range };
+        var source = storage.program.PhysicalProgramBuilder.init(a, backing.reader());
+        var view: storage.program.PhysicalProgramBuilder.View = .{ .builder = &source, .version = 0, .range = data.range };
         const native = try fat.scan.load(a, io, view.reader(), false);
         const g = native.graph.geometry;
         const cluster = g.clusters - 8;
@@ -98,7 +98,7 @@ test "tail bootstrap preserves relocated file blocks through undo or accepted cl
         const resources: compiler.Resources = .{ .session = sid, .maintenance_uuid = @splat(0x56), .esp = esp.range, .tail = try compiler.tailRange(layout.usable, 16 * MI_B, 4096), .control = .{ .offset = MI_B, .length = 8192 }, .bootstrap_store = .{ .session = sid, .block_size = 4096, .extents = &.{.{ .offset = 2 * MI_B, .length = 12 * MI_B }} }, .cleanup_store = .{ .session = sid, .block_size = 4096, .extents = &.{.{ .offset = 18 * MI_B, .length = 12 * MI_B }} } };
         try std.testing.expect(file_at >= resources.tail.offset);
         const compiled = try compiler.compile(a, io, machine.disk().reader(), inventory, draft, resources);
-        var session = try storage.maintenance_session.Session.prepare(a, io, machine.disk(), compiled.bundle);
+        var session = try storage.recovery_session.RecoverySession.prepare(a, io, machine.disk(), compiled.bundle);
         try session.bootstrap(io, compiled.verifier(.bootstrap), null);
         const smaller: storage.model.Range = .{ .offset = data.range.offset, .length = resources.tail.offset - data.range.offset };
         try verifyPayload(a, io, machine.disk().reader(), smaller, &payload);

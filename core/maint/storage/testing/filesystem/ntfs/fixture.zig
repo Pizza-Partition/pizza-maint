@@ -68,7 +68,7 @@ fn moveToTail(a: std.mem.Allocator, io: std.Io, path: []const u8) !void {
     const c_api = ntfs.c_api;
     var image = try Image.open(io, path, @import("../../fixture.zig").IDENTITY, 512);
     defer image.close(io);
-    var overlay = @import("../../../mutation.zig").Builder.init(a, image.reader());
+    var overlay = @import("../../../mutation.zig").MutationBuilder.init(a, image.reader());
     defer overlay.deinit();
     {
         const session = try ntfs.Session.open(a, io, overlay.reader(), &overlay);

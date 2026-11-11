@@ -154,8 +154,8 @@ pub fn query(a: std.mem.Allocator, io: std.Io) !wire.InventorySnapshot {
                 p.attributes = try a.print("{d}", .{entry.attributes});
                 if (std.mem.eql(u8, p.type_guid.?, "28732ac11ff8d211ba4b00a0c93ec93b")) p.protected = true;
                 if (p.mountpoints.len == 0 and block != null) {
-                    var builder = storage.program.Builder.init(a, block.?.backend().reader());
-                    var view: storage.program.Builder.View = .{ .builder = &builder, .version = 0, .range = entry.range };
+                    var builder = storage.program.PhysicalProgramBuilder.init(a, block.?.backend().reader());
+                    var view: storage.program.PhysicalProgramBuilder.View = .{ .builder = &builder, .version = 0, .range = entry.range };
                     const snapshot = storage.filesystem.BUILTIN.query(a, io, view.reader()) catch null;
                     if (snapshot) |f| {
                         p.filesystem = @fromBackingInt(@intCast(@backingInt(f.filesystem)));

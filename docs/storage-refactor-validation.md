@@ -90,7 +90,7 @@ zig build test-transition -Doptimize=safe -- --bundle PATH --kernel-version 7.2.
 | 不可变物理程序、执行、undo、暂存和恢复                 | `program / program_executor / recovery_store` |
 | 测试操作及故障注入                                     | `testing/executor`，直接包装生产实现          |
 
-后端输出仅包含新字节及读集，不再携带自行决定的物理搬移计划；`mutation.Builder.mapRelocation` 只为编码器提供原始来源映射。克隆内容守卫与验证直接使用 `Reader.digest`，不保留仅包装一个校验函数的模块。FatFs 只构建 Unicode 辅助，不构建 `ff.c`，没有挂载会话或磁盘回调。移除 `test-ext` 兼容别名；内存诊断字段改为 `encoding_limit_bytes`。
+后端输出仅包含新字节及读集，不再携带自行决定的物理搬移计划；`mutation.MutationBuilder.mapRelocation` 只为编码器提供原始来源映射。克隆内容守卫与验证直接使用 `Reader.digest`，不保留仅包装一个校验函数的模块。FatFs 只构建 Unicode 辅助，不构建 `ff.c`，没有挂载会话或磁盘回调。移除 `test-ext` 兼容别名；内存诊断字段改为 `encoding_limit_bytes`。
 
 所有文件系统成功、中断、掉电和内存压力验收均已迁到当前生产计划及执行器。旧协议专属的移动图拒绝规则、进度追加记录和整卷冻结预算断言不再适用；当前测试覆盖循环移动、交叉覆盖、固定状态槽损坏拒绝、完整前映像恢复，以及 128 MiB 克隆在 32 MiB 受控分配预算内成功。保留短写、错误传播、身份变化、源变化、取消、再次掉电、重复恢复、独立工具和文件内容断言。
 

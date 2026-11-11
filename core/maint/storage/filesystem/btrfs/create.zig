@@ -2,7 +2,7 @@
 //! metadata chunks, skinny metadata, CRC32C. No host mkfs process is invoked.
 const std = @import("std");
 const format = @import("format.zig");
-const Builder = @import("../../mutation.zig").Builder;
+const MutationBuilder = @import("../../mutation.zig").MutationBuilder;
 const Allocator = std.mem.Allocator;
 const SYSTEM = 1024 * 1024;
 const MIXED = 8 * 1024 * 1024;
@@ -66,7 +66,7 @@ fn makeChunk(a: Allocator, super: []const u8, physical: u64, length: u64, flags:
     @memcpy(format.field(format.STRIPE, "dev_uuid", s), format.field(format.DEV, "uuid", format.field(format.SUPER, "dev_item", super)));
     return b;
 }
-pub fn create(a: Allocator, io: std.Io, overlay: *Builder, layout: Layout) !void {
+pub fn create(a: Allocator, io: std.Io, overlay: *MutationBuilder, layout: Layout) !void {
     const bytes = overlay.source.target.capacity;
     if (bytes < 32 * 1024 * 1024 or bytes % NODE_SIZE != 0 or overlay.source.target.sector_size > NODE_SIZE) return error.BtrfsInvalidCreateSize;
     try overlay.stageWrite(io, 0, &@as([65536]u8, @splat(0)));

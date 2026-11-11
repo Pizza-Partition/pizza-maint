@@ -1,4 +1,5 @@
 //! Separate acceptance binary. Never installed as the product maintenance application.
+pub const enable_storage_test_support = true;
 const std = @import("std");
 const maintenance = @import("maintenance");
 
@@ -23,5 +24,5 @@ fn run(init: std.process.Init) !u8 {
         try std.Io.File.stdout().writeStreamingAll(init.io, "\n");
         return 0;
     }
-    return @import("application").runWithDevices(init, maintenance.Testing.devices.PROVIDER);
+    return @import("application").runWithDevices(init, @import("devices.zig").PROVIDER);
 }

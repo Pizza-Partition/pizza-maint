@@ -4,13 +4,13 @@ const std = @import("std");
 const model = @import("../../model.zig");
 const device = @import("../../device.zig");
 const MutationSet = @import("../../mutation.zig").MutationSet;
-const Builder = @import("../../mutation.zig").Builder;
+const MutationBuilder = @import("../../mutation.zig").MutationBuilder;
 const ext = @import("root.zig");
 const Session = @import("io.zig").Session;
 const c_api = ext.c_api;
 
 pub fn prepare(comptime operation: model.Kind, a: std.mem.Allocator, io: std.Io, reader: device.Reader, snapshot: model.Snapshot, _: u64) !MutationSet {
-    var overlay = Builder.init(a, reader);
+    var overlay = MutationBuilder.init(a, reader);
     defer overlay.deinit();
     switch (operation) {
         .repair => try repair(a, io, &overlay),
@@ -24,7 +24,7 @@ pub fn prepare(comptime operation: model.Kind, a: std.mem.Allocator, io: std.Io,
 
 /// Conservative repair: only allocation summary counters, never inferred file
 /// ownership, discarded inodes, checksum bypasses or journal replay.
-fn repair(a: std.mem.Allocator, io: std.Io, overlay: *Builder) !void {
+fn repair(a: std.mem.Allocator, io: std.Io, overlay: *MutationBuilder) !void {
     const session = try Session.openStaged(a, io, overlay);
     defer session.close();
     const fs = session.fs;

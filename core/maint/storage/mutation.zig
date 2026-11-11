@@ -6,7 +6,7 @@ pub const MAX_RECORD_BYTES = 1024 * 1024;
 
 pub const Read = struct { range: model.Range, expected: model.Digest };
 pub const Write = struct {
-    /// Device-sector-aligned byte range. Builder.stageWrite expands partial
+    /// Device-sector-aligned byte range. MutationBuilder.stageWrite expands partial
     /// metadata updates while preserving the rest of each affected sector.
     range: model.Range,
     content: []const u8,
@@ -39,7 +39,7 @@ pub const Collector = struct {
 };
 
 /// Mutable record copies and relocation views used only by format encoders.
-pub const Builder = struct {
+pub const MutationBuilder = struct {
     const Entry = struct { before: []u8, base: ?[]u8 = null, after: ?[]u8 = null };
     allocator: std.mem.Allocator,
     source: device.Reader,
@@ -48,11 +48,11 @@ pub const Builder = struct {
     written_bytes: u64 = 0,
     max_cached_bytes: u64 = @as(@import("memory.zig").PlanningLimits, .{}).read_bytes,
 
-    pub fn init(a: std.mem.Allocator, source: device.Reader) Builder {
+    pub fn init(a: std.mem.Allocator, source: device.Reader) MutationBuilder {
         return .{ .allocator = a, .source = source, .entries = .init(a), .relocated = .init(a), .max_cached_bytes = source.limits().read_bytes };
     }
 
-    pub fn deinit(self: *Builder) void {
+    pub fn deinit(self: *MutationBuilder) void {
         var values = self.entries.valueIterator();
         while (values.next()) |entry| {
             self.allocator.free(entry.before);
@@ -64,18 +64,18 @@ pub const Builder = struct {
         self.* = undefined;
     }
 
-    pub fn reader(self: *Builder) device.Reader {
+    pub fn reader(self: *MutationBuilder) device.Reader {
         return .{ .context = self, .target = self.source.target, .vtable = &.{ .read = read }, .memory = self.source.memory, .region = self.source.region };
     }
 
     /// Immutable source version for relocation, even after overlapping staged
     /// writes. These reads join the same execution-time read guards.
-    pub fn originalReader(self: *Builder) device.Reader {
+    pub fn originalReader(self: *MutationBuilder) device.Reader {
         return .{ .context = self, .target = self.source.target, .vtable = &.{ .read = readOriginal }, .memory = self.source.memory, .region = self.source.region };
     }
 
     fn readOriginal(context: *const anyopaque, io: std.Io, offset: u64, bytes: []u8) !void {
-        const self: *Builder = @constCast(@as(*const Builder, @ptrCast(@alignCast(context))));
+        const self: *MutationBuilder = @constCast(@as(*const MutationBuilder, @ptrCast(@alignCast(context))));
         var done: usize = 0;
         const size = self.source.target.sector_size;
         while (done < bytes.len) {
@@ -88,7 +88,7 @@ pub const Builder = struct {
         }
     }
 
-    fn getEntry(self: *Builder, io: std.Io, index: u64) !*Entry {
+    fn getEntry(self: *MutationBuilder, io: std.Io, index: u64) !*Entry {
         const size = self.source.target.sector_size;
         try self.cacheOriginal(io, index);
         if (self.relocated.get(index)) |origin| {
@@ -103,7 +103,7 @@ pub const Builder = struct {
         return self.entries.getPtr(index).?;
     }
 
-    fn cacheOriginal(self: *Builder, io: std.Io, index: u64) !void {
+    fn cacheOriginal(self: *MutationBuilder, io: std.Io, index: u64) !void {
         if (self.entries.contains(index)) return;
         const size = self.source.target.sector_size;
         if ((self.entries.count() + 1) * @as(u64, size) > self.max_cached_bytes) return error.StorageReadSetTooLarge;
@@ -114,7 +114,7 @@ pub const Builder = struct {
     }
 
     fn read(context: *const anyopaque, io: std.Io, offset: u64, bytes: []u8) !void {
-        const self: *Builder = @constCast(@as(*const Builder, @ptrCast(@alignCast(context))));
+        const self: *MutationBuilder = @constCast(@as(*const MutationBuilder, @ptrCast(@alignCast(context))));
         var done: usize = 0;
         const size = self.source.target.sector_size;
         while (done < bytes.len) {
@@ -129,7 +129,7 @@ pub const Builder = struct {
 
     /// C libraries may write arbitrary byte ranges. Protect whole device
     /// sectors, including bytes outside a partial write, before changing them.
-    pub fn stageWrite(self: *Builder, io: std.Io, offset: u64, bytes: []const u8) !void {
+    pub fn stageWrite(self: *MutationBuilder, io: std.Io, offset: u64, bytes: []const u8) !void {
         const end = std.math.add(u64, offset, bytes.len) catch return error.RangeOverflow;
         if (end > self.source.target.capacity) return error.RangeOutsideDevice;
         var done: usize = 0;
@@ -149,14 +149,14 @@ pub const Builder = struct {
         }
     }
 
-    fn readOriginalSector(self: *Builder, io: std.Io, index: u64, bytes: []u8) !void {
+    fn readOriginalSector(self: *MutationBuilder, io: std.Io, index: u64, bytes: []u8) !void {
         try self.cacheOriginal(io, index);
         @memcpy(bytes, self.entries.get(index).?.before);
     }
 
     /// Make relocated records readable to the codec. The common planner owns
     /// the physical move; this only maps destinations to original source bytes.
-    pub fn mapRelocation(self: *Builder, io: std.Io, source: u64, destination: u64, length: u64) !void {
+    pub fn mapRelocation(self: *MutationBuilder, io: std.Io, source: u64, destination: u64, length: u64) !void {
         const size = self.source.target.sector_size;
         try (model.Range{ .offset = source, .length = length }).validate(self.source.target.capacity, size);
         try (model.Range{ .offset = destination, .length = length }).validate(self.source.target.capacity, size);
@@ -185,7 +185,7 @@ pub const Builder = struct {
     /// Coalesce changed sectors into patches and original reads into guards.
     /// Captured before-images remain authoritative even if the source changes
     /// during planning; execution rejects that stale input before writing.
-    pub fn finish(self: *Builder, _: std.Io, discard: bool) !MutationSet {
+    pub fn finish(self: *MutationBuilder, _: std.Io, discard: bool) !MutationSet {
         const a = self.allocator;
         const keys = try a.alloc(u64, self.entries.count());
         defer a.free(keys);

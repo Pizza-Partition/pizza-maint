@@ -66,8 +66,8 @@ const Stop = struct {
     }
 };
 fn checkPartition(a: std.mem.Allocator, home: []const u8, label: []const u8, root: storage.device.Reader, range: storage.model.Range, case: fixtures.Case, payload: []const u8) !void {
-    var builder = storage.program.Builder.init(a, root);
-    var view: storage.program.Builder.View = .{ .builder = &builder, .version = 0, .range = range };
+    var builder = storage.program.PhysicalProgramBuilder.init(a, root);
+    var view: storage.program.PhysicalProgramBuilder.View = .{ .builder = &builder, .version = 0, .range = range };
     const path = try std.fs.path.join(a, &.{ home, label });
     const output = try std.Io.Dir.cwd().createFile(IO, path, .{ .exclusive = true });
     defer output.close(IO);

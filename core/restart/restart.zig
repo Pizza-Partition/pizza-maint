@@ -146,7 +146,7 @@ fn compile(a: std.mem.Allocator, io: std.Io, vars: uefi.Variables, block: *stora
     // Initial request pin is still intact; no target/capsule write is admitted.
     const old = try Binding.read(a, io, vars);
     try old.check(request_bytes, try proto.hexDigest(request.image_digest));
-    try block.admitPreparationFile(a, io, storage.model.digest(request_bytes), compiled_path, compiled_proof, Handoff.BLOCK_SIZE);
+    try storage.session_admission.admitPreparationFile(block, a, io, storage.model.digest(request_bytes), compiled_path, compiled_proof, Handoff.BLOCK_SIZE);
     try writeFrozen(io, block.backend(), compiled_proof, sealed.bytes);
     const persisted = try readFile(a, io, reader, esp, id, .manifest, Handoff.MANIFEST_BYTES);
     if (!std.mem.eql(u8, &storage.model.digest(persisted.bytes), &sealed.binding.payload_digest)) return error.SessionManifestChanged;
@@ -225,7 +225,7 @@ pub fn run(a: std.mem.Allocator, io: std.Io) !void {
         if (!std.mem.eql(u8, &storage.model.digest(request_file.bytes), &(loaded.metadata.request_digest orelse return error.MissingRequestProvenance))) return error.HandoffRequestChanged;
     }
     if (!std.mem.eql(u8, loaded.metadata.lease.option, request.lease.option) or !std.mem.eql(u8, loaded.metadata.lease.original_order, request.lease.original_order)) return error.PreparedSessionChanged;
-    const prior = storage.maintenance_session.Session.open(a, io, block.backend(), loaded.compiled.bundle) catch |err| switch (err) {
+    const prior = storage.recovery_session.RecoverySession.open(a, io, block.backend(), loaded.compiled.bundle) catch |err| switch (err) {
         error.InvalidSessionHeaders => null,
         else => return err,
     };
@@ -235,9 +235,9 @@ pub fn run(a: std.mem.Allocator, io: std.Io) !void {
     // Reopen after admission so resumed undo/recovery receives the same granted
     // capability as a freshly prepared session, rather than the read-only copy.
     var session = if (fresh)
-        try storage.maintenance_session.Session.prepare(a, io, block.backend(), loaded.compiled.bundle)
+        try storage.recovery_session.RecoverySession.prepare(a, io, block.backend(), loaded.compiled.bundle)
     else
-        try storage.maintenance_session.Session.open(a, io, block.backend(), loaded.compiled.bundle);
+        try storage.recovery_session.RecoverySession.open(a, io, block.backend(), loaded.compiled.bundle);
     if (!fresh) try session.recover(io);
     if (session.phase == .prepared or session.phase == .initialized) {
         if (!fresh) _ = try choice(io, "Recovered session. Press C then Enter to continue the approved plan.\n", "c");
@@ -263,12 +263,11 @@ pub fn run(a: std.mem.Allocator, io: std.Io) !void {
     std.log.info("PIZZA_RESTART_RECEIPT_PINNED", .{});
 }
 fn receiptBody(bytes: []const u8, terminal: Handoff.Terminal) ![]const u8 {
-    if (bytes.len != Handoff.BLOCK_SIZE + 65536 or !std.mem.eql(u8, bytes[0..8], "PZRCPT01") or std.mem.readInt(u32, bytes[12..16], .little) != Handoff.BLOCK_SIZE) return error.InvalidCompletionReceiptEnvelope;
-    const size = std.mem.readInt(u32, bytes[8..12], .little);
-    if (size == 0 or size > 65536 or !std.mem.eql(u8, bytes[Handoff.BLOCK_SIZE - 32 .. Handoff.BLOCK_SIZE], &storage.model.digest(bytes[0 .. Handoff.BLOCK_SIZE - 32])) or !std.mem.eql(u8, bytes[16..48], &try proto.hexDigest(terminal.expected.id)) or !std.mem.eql(u8, bytes[48..80], &try proto.hexDigest(terminal.expected.disk_identity))) return error.InvalidCompletionReceiptEnvelope;
-    const result = bytes[Handoff.BLOCK_SIZE..][0..size];
-    if (!std.mem.eql(u8, bytes[80..112], &storage.model.digest(result)) or !std.mem.allEqual(u8, bytes[Handoff.BLOCK_SIZE + size ..], 0)) return error.InvalidCompletionReceiptEnvelope;
-    return result;
+    const envelope = try proto.receipt_envelope.decode(bytes);
+    if (std.mem.readInt(u32, bytes[12..16], .little) != Handoff.BLOCK_SIZE or
+        !std.mem.eql(u8, &envelope.session, &try proto.hexDigest(terminal.expected.id)) or
+        !std.mem.eql(u8, &envelope.disk_identity, &try proto.hexDigest(terminal.expected.disk_identity))) return error.InvalidCompletionReceiptEnvelope;
+    return envelope.bytes;
 }
 
 test "restart paths use fixed FAT short names and the complete session identity" {

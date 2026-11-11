@@ -10,7 +10,7 @@ pub fn reservationBytes(block: u32) !u64 {
     try storage.recovery_store.validateBlockSize(block);
     return try std.math.add(u64, block, std.mem.alignForward(u64, MAX_BYTES, block));
 }
-pub fn validate(a: std.mem.Allocator, target: storage.model.Target, bundle: storage.maintenance_session.Bundle, recovery: storage.esp_anchor.Proof, anchor: Anchor) !void {
+pub fn validate(a: std.mem.Allocator, target: storage.model.Target, bundle: storage.recovery_session.Bundle, recovery: storage.esp_anchor.Proof, anchor: Anchor) !void {
     try bundle.validate(a, target);
     const proof = anchor.proof;
     const block = bundle.bootstrap_store.block_size;
@@ -79,18 +79,13 @@ pub const EspReceipt = struct {
         defer a.free(header);
         try self.transfer(io, 0, header, false);
         if (std.mem.allEqual(u8, header, 0)) return error.FileNotFound;
-        if (!std.mem.eql(u8, header[0..8], "PZRCPT01") or
-            !std.mem.eql(u8, header[header.len - 32 ..], &storage.model.digest(header[0 .. header.len - 32]))) return error.FileNotFound;
-        const size = std.mem.readInt(u32, header[8..12], .little);
-        if (size == 0 or size > MAX_BYTES or std.mem.readInt(u32, header[12..16], .little) != self.block or
-            !std.mem.eql(u8, header[16..48], &try proto.hexDigest(self.expected.id)) or
-            !std.mem.eql(u8, header[48..80], &self.disk.target.identity) or
-            !std.mem.allEqual(u8, header[112 .. header.len - 32], 0)) return error.FileNotFound;
         const body = try a.alloc(u8, @intCast(self.proof.bytes - self.block));
         defer a.free(body);
         try self.transfer(io, self.block, body, false);
-        if (!std.mem.eql(u8, header[80..112], &storage.model.digest(body[0..size])) or
-            !std.mem.allEqual(u8, body[size..], 0)) return error.FileNotFound;
+        const envelope = proto.receipt_envelope.decodeParts(header, body) catch return error.FileNotFound;
+        if (!std.mem.eql(u8, &envelope.session, &try proto.hexDigest(self.expected.id)) or
+            !std.mem.eql(u8, &envelope.disk_identity, &self.disk.target.identity)) return error.FileNotFound;
+        const size = envelope.bytes.len;
         _ = try proto.parseCompletion(a, body[0..size], self.expected);
         return try a.dupe(u8, body[0..size]);
     }
@@ -113,14 +108,7 @@ pub const EspReceipt = struct {
         try self.disk.flush(io);
         const header = try self.allocator.alloc(u8, self.block);
         defer self.allocator.free(header);
-        @memset(header, 0);
-        @memcpy(header[0..8], "PZRCPT01");
-        std.mem.writeInt(u32, header[8..12], @intCast(bytes.len), .little);
-        std.mem.writeInt(u32, header[12..16], self.block, .little);
-        @memcpy(header[16..48], &try proto.hexDigest(self.expected.id));
-        @memcpy(header[48..80], &self.disk.target.identity);
-        @memcpy(header[80..112], &storage.model.digest(bytes));
-        @memcpy(header[header.len - 32 ..], &storage.model.digest(header[0 .. header.len - 32]));
+        try proto.receipt_envelope.encodeHeader(header, bytes, try proto.hexDigest(self.expected.id), self.disk.target.identity);
         // A durable payload precedes its checked publication header. A torn or
         // unsynced header remains unpublished, retaining the firmware binding.
         try self.transfer(io, 0, header, true);

@@ -1,6 +1,6 @@
 //! Export the storage-independent protocol package with a content manifest.
 const std = @import("std");
-const FILES = [_][]const u8{ "build.zig", "build.zig.zon", "README.md", "root.zig", "contract.json", "generated.zig", "generated/contract.js", "generated/contract.d.ts" };
+const FILES = [_][]const u8{ "build.zig", "build.zig.zon", "README.md", "root.zig", "contract.json", "generated.zig", "generated/contract.js", "generated/contract.d.ts", "uefi.zig", "firmware_pin.zig", "receipt_envelope.zig", "inventory_fingerprint.zig", "intent_normalization.zig" };
 const Entry = struct { name: []const u8, sha256: []const u8 };
 pub fn main(init: std.process.Init) !void {
     const a = init.arena.allocator();

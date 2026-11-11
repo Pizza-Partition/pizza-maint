@@ -13,7 +13,7 @@ test "same-disk capsule survives reopen and undo; rejects overlapping writes bef
         @memset(original, 0x23);
         const target: storage.model.Target = .{ .identity = @splat(0x73), .capacity = original.len, .sector_size = sector };
         var m = try Machine.init(a, target, original);
-        var b = storage.program.Builder.init(a, m.disk().reader());
+        var b = storage.program.PhysicalProgramBuilder.init(a, m.disk().reader());
         const replacement = try a.alloc(u8, sector);
         @memset(replacement, 0x91);
         try b.write(IO, .{ .offset = 0, .length = sector }, replacement, true);
@@ -27,7 +27,7 @@ test "same-disk capsule survives reopen and undo; rejects overlapping writes bef
         try std.testing.expectEqual(.verified, try storage.program_executor.recover(a, IO, m.disk(), capsule.store(), null));
         try std.testing.expectEqual(.rolled_back, try storage.program_executor.undo(a, IO, m.disk(), capsule.store(), null));
         try std.testing.expectEqualSlices(u8, original[0..65536], m.live[0..65536]);
-        var overlap = storage.program.Builder.init(a, m.disk().reader());
+        var overlap = storage.program.PhysicalProgramBuilder.init(a, m.disk().reader());
         try overlap.write(IO, .{ .offset = 65536, .length = sector }, replacement, false);
         try std.testing.expectError(error.ProgramOverwritesRecovery, capsule.protects(try overlap.finish()));
         var wrong = desc;

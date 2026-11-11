@@ -1,7 +1,5 @@
 const std = @import("std");
-const wire = @import("proto").wire;
-
-/// Bind planning to geometry and identities, excluding changing usage counters.
+const wire = @import("generated.zig");
 pub fn fingerprint(a: std.mem.Allocator, snapshot: wire.InventorySnapshot) ![]const u8 {
     const disks = try a.dupe(wire.HostDisk, snapshot.disks);
     for (disks) |*disk| {

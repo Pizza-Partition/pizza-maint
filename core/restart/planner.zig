@@ -17,38 +17,7 @@ fn has(intents: []const wire.PlanIntent, id: []const u8, kind: wire.IntentKind) 
 fn diagnostic(a: std.mem.Allocator, list: *std.ArrayList(wire.Diagnostic), code: []const u8, message: []const u8, id: ?[]const u8) !void {
     try list.append(a, .{ .code = code, .message = message, .partition_id = id, .severity = .@"error" });
 }
-pub fn optimize(a: std.mem.Allocator, input: []const wire.PlanIntent) ![]const wire.PlanIntent {
-    if (input.len > 16384) return error.PlanTooLarge;
-    var out: std.ArrayList(wire.PlanIntent) = .empty;
-    for (input) |intent| {
-        var handled = false;
-        if (intent.kind == .resize or intent.kind == .move or intent.kind == .label or intent.kind == .delete) {
-            var j = out.items.len;
-            while (j != 0) {
-                j -= 1;
-                const old = &out.items[j];
-                if (old.kind == .barrier or old.kind == .copy or old.kind == .format or old.kind == .delete) break;
-                if (!eq(old.partition_id, intent.partition_id)) continue;
-                if (old.kind == .create and intent.kind != .move) {
-                    if (intent.kind == .delete) {
-                        _ = out.orderedRemove(j);
-                    } else {
-                        if (intent.length) |n| old.length = n;
-                        if (intent.offset) |n| old.offset = n;
-                        if (intent.label) |label| old.label = label;
-                    }
-                    handled = true;
-                } else if (old.kind == intent.kind) {
-                    old.* = intent;
-                    handled = true;
-                }
-                break;
-            }
-        }
-        if (!handled) try out.append(a, intent);
-    }
-    return out.toOwnedSlice(a);
-}
+pub const optimize = @import("proto").intent_normalization.optimize;
 pub fn validate(a: std.mem.Allocator, inventory: wire.InventorySnapshot, draft: wire.PlanDraft) !wire.ValidatedPlan {
     if (draft.version != 4 or inventory.version != 4) return error.UnsupportedProtocolVersion;
     _ = try proto.hexDigest(draft.snapshot_id);

@@ -1,12 +1,12 @@
 const std = @import("std");
 const format = @import("format.zig");
 const scan = @import("scan.zig");
-const Builder = @import("../../mutation.zig").Builder;
+const MutationBuilder = @import("../../mutation.zig").MutationBuilder;
 const model = @import("../../model.zig");
 const Reader = @import("../../device.zig").Reader;
 const MutationSet = @import("../../mutation.zig").MutationSet;
 pub fn prepare(comptime operation: model.Kind, a: std.mem.Allocator, io: std.Io, reader: Reader, _: model.Snapshot, _: u64) !MutationSet {
-    var overlay = Builder.init(a, reader);
+    var overlay = MutationBuilder.init(a, reader);
     defer overlay.deinit();
     switch (operation) {
         .repair => {
@@ -36,7 +36,7 @@ pub fn prepare(comptime operation: model.Kind, a: std.mem.Allocator, io: std.Io,
     if (graph.geometry.bytes() != expected) return error.BtrfsWrongSize;
     return overlay.finish(io, operation == .create);
 }
-pub fn writeSupers(io: std.Io, overlay: *Builder, super: [4096]u8, previous_bytes: u64) !void {
+pub fn writeSupers(io: std.Io, overlay: *MutationBuilder, super: [4096]u8, previous_bytes: u64) !void {
     const bytes = format.get(format.SUPER, "total_bytes", &super);
     for (format.MIRRORS) |position| {
         if (position + 4096 > bytes) {
@@ -51,7 +51,7 @@ pub fn writeSupers(io: std.Io, overlay: *Builder, super: [4096]u8, previous_byte
 }
 /// Repack device extents after key changes, preserving tree topology and all
 /// item payloads. A plan that would need a B-tree split is rejected pre-write.
-pub fn rewrite(a: std.mem.Allocator, io: std.Io, overlay: *Builder, g: *scan.Graph, bytes: u64) !void {
+pub fn rewrite(a: std.mem.Allocator, io: std.Io, overlay: *MutationBuilder, g: *scan.Graph, bytes: u64) !void {
     _ = a;
     const old_bytes = g.geometry.bytes();
     const dev_entries = try g.entries(4);

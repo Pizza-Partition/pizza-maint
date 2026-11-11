@@ -16,9 +16,9 @@ pub const Plan = struct {
     clone_range: ?model.Range = null,
     table_checkpoint: ?usize = null,
     pub fn verifyFilesystems(self: Plan, a: std.mem.Allocator, io: std.Io, reader: device.Reader) !bool {
-        var source = programs.Builder.init(a, reader);
+        var source = programs.PhysicalProgramBuilder.init(a, reader);
         for (self.checks) |check| {
-            var view: programs.Builder.View = .{ .builder = &source, .version = 0, .range = check.range };
+            var view: programs.PhysicalProgramBuilder.View = .{ .builder = &source, .version = 0, .range = check.range };
             const fs = try check.driver.open(a, io, view.reader(), false);
             defer fs.close();
             const snapshot = try fs.inspect();
@@ -48,8 +48,8 @@ pub const Plan = struct {
 fn driverFor(io: std.Io, reader: device.Reader) !semantic.Driver {
     return filesystems.BUILTIN.detect(io, reader);
 }
-fn appendFilesystem(a: std.mem.Allocator, io: std.Io, builder: *programs.Builder, range: model.Range, selected: ?semantic.Driver, intent: semantic.Intent) !semantic.Driver {
-    var view: programs.Builder.View = .{ .builder = builder, .version = builder.currentVersion(), .range = range };
+fn appendFilesystem(a: std.mem.Allocator, io: std.Io, builder: *programs.PhysicalProgramBuilder, range: model.Range, selected: ?semantic.Driver, intent: semantic.Intent) !semantic.Driver {
+    var view: programs.PhysicalProgramBuilder.View = .{ .builder = builder, .version = builder.currentVersion(), .range = range };
     const driver = selected orelse try driverFor(io, view.reader());
     if (intent.label.len != 0 and (driver.filesystem != .ntfs or intent.operation != .create)) return error.UnsupportedFilesystemLabel;
     const fs = try driver.open(a, io, view.reader(), intent.operation == .create);
@@ -63,7 +63,7 @@ fn appendFilesystem(a: std.mem.Allocator, io: std.Io, builder: *programs.Builder
 }
 pub fn filesystem(a: std.mem.Allocator, io: std.Io, reader: device.Reader, range: model.Range, selected: ?semantic.Driver, intent: semantic.Intent) !Plan {
     try range.validate(reader.target.capacity, reader.target.sector_size);
-    var builder = programs.Builder.init(a, reader);
+    var builder = programs.PhysicalProgramBuilder.init(a, reader);
     const driver = try appendFilesystem(a, io, &builder, range, selected, intent);
     var expected = intent;
     if (expected.operation == .create) expected.bytes = range.length;
@@ -82,7 +82,7 @@ pub fn layout(a: std.mem.Allocator, io: std.Io, reader: device.Reader, desired: 
 pub fn layoutWithFormats(a: std.mem.Allocator, io: std.Io, reader: device.Reader, desired: []const tables.Entry, formats: []const Format) !Plan {
     const original = try tables.BUILTIN.readLayout(a, io, reader);
     try tables.BUILTIN.validateLayout(original, desired);
-    var builder = programs.Builder.init(a, reader);
+    var builder = programs.PhysicalProgramBuilder.init(a, reader);
     for (original.original) |r| try builder.guard(io, r.range);
     for (formats, 0..) |format, i| {
         for (formats[0..i]) |other| if (std.mem.eql(u8, &format.partition_id, &other.partition_id)) return error.DuplicateFormatIntent;
@@ -101,7 +101,7 @@ pub fn layoutWithFormats(a: std.mem.Allocator, io: std.Io, reader: device.Reader
             if (std.mem.eql(u8, &old.id, &entry.id)) break old;
         } else return error.PartitionIdentityChanged;
         if (std.meta.eql(old.range, entry.range)) continue;
-        var view: programs.Builder.View = .{ .builder = &builder, .version = 0, .range = old.range };
+        var view: programs.PhysicalProgramBuilder.View = .{ .builder = &builder, .version = 0, .range = old.range };
         try transitions.append(a, .{ .old = old, .desired = entry, .driver = try driverFor(io, view.reader()) });
     }
     // Shrinking takes place at the old origin. Never expose the final geometry
@@ -112,7 +112,7 @@ pub fn layoutWithFormats(a: std.mem.Allocator, io: std.Io, reader: device.Reader
     const compacted = builder.currentVersion();
     for (transitions.items) |*t| {
         if (t.old.range.offset == t.desired.range.offset) continue;
-        var view: programs.Builder.View = .{ .builder = &builder, .version = compacted, .range = t.old.range };
+        var view: programs.PhysicalProgramBuilder.View = .{ .builder = &builder, .version = compacted, .range = t.old.range };
         const fs = try t.driver.open(a, io, view.reader(), false);
         defer fs.close();
         const ranges = try coverage(a, fs);
@@ -202,7 +202,7 @@ pub fn copy(a: std.mem.Allocator, io: std.Io, source: device.Reader, destination
     };
     if (!allowed) return error.NativeOperationUnavailable;
     if (snapshot.filesystem_bytes > range.length) return error.CopyTargetTooSmall;
-    var builder = programs.Builder.init(a, destination);
+    var builder = programs.PhysicalProgramBuilder.init(a, destination);
     try builder.attest(range, snapshot, .copy);
     const digest = try builder.copy(io, source, .{ .offset = 0, .length = snapshot.filesystem_bytes }, range.offset);
     const output_range: model.Range = .{ .offset = range.offset, .length = snapshot.filesystem_bytes };

@@ -14,7 +14,7 @@ pub const Resources = struct {
     cleanup_store: storage.recovery_store.CapsuleDescriptor,
 };
 pub const Compiled = struct {
-    bundle: storage.maintenance_session.Bundle,
+    bundle: storage.recovery_session.Bundle,
     bootstrap: storage.service.Plan,
     apply: storage.service.Plan,
     cleanup: storage.service.Plan,
@@ -115,7 +115,7 @@ pub fn compile(a: std.mem.Allocator, io: std.Io, reader: storage.device.Reader, 
     bootstrap.program = try storage.program.bindRequest(a, bootstrap.program, request_digest);
     apply.program = try storage.program.bindRequest(a, apply.program, request_digest);
     cleanup.program = try storage.program.bindRequest(a, cleanup.program, request_digest);
-    const bundle: storage.maintenance_session.Bundle = .{
+    const bundle: storage.recovery_session.Bundle = .{
         .session = resources.session,
         .control = resources.control,
         .bootstrap = bootstrap.program,
@@ -136,14 +136,14 @@ pub fn compile(a: std.mem.Allocator, io: std.Io, reader: storage.device.Reader, 
 /// Identity writes use the existing complete before-image executor machinery;
 /// unallocated residue needs no preservation and no filesystem-specific branch.
 fn prepareTail(a: std.mem.Allocator, io: std.Io, reader: storage.device.Reader, entries: []const storage.partition_table.Entry, tail: storage.model.Range, block: u32, p: storage.program.Program) !storage.program.Program {
-    var builder = storage.program.Builder.init(a, reader);
+    var builder = storage.program.PhysicalProgramBuilder.init(a, reader);
     try builder.steps.appendSlice(a, p.steps);
     try builder.guards.appendSlice(a, p.guards);
     try builder.evidence.appendSlice(a, p.evidence);
-    var source = storage.program.Builder.init(a, reader);
+    var source = storage.program.PhysicalProgramBuilder.init(a, reader);
     for (entries) |entry| {
         if (!entry.range.overlaps(tail)) continue;
-        var view: storage.program.Builder.View = .{ .builder = &source, .version = 0, .range = entry.range };
+        var view: storage.program.PhysicalProgramBuilder.View = .{ .builder = &source, .version = 0, .range = entry.range };
         const driver = try storage.filesystem.BUILTIN.detect(io, view.reader());
         const fs = try driver.open(a, io, view.reader(), false);
         defer fs.close();

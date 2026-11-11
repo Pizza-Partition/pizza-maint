@@ -1,4 +1,5 @@
 //! Standalone disposable-image self-test; never linked into pizza-maint.
+pub const enable_storage_test_support = true;
 const std = @import("std");
 const storage = @import("storage");
 

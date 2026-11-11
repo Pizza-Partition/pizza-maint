@@ -217,13 +217,13 @@ pub fn build(b: *std.Build) void {
     compile_policy.configure(protocol_export);
     const export_package = b.addRunArtifact(protocol_export);
     const protocol_directory = export_package.addOutputDirectoryArg("protocol");
-    const protocol_archive = export_package.addOutputFileArg("pizza-protocol-4.0.0.tar.gz");
+    const protocol_archive = export_package.addOutputFileArg("pizza-protocol-4.0.1.tar.gz");
     // Track the actual inputs, excluding nested developer build caches.
-    for ([_][]const u8{ "build.zig", "build.zig.zon", "README.md", "root.zig", "contract.json", "generated.zig", "generated/contract.js", "generated/contract.d.ts" }) |name|
+    for ([_][]const u8{ "build.zig", "build.zig.zon", "README.md", "root.zig", "contract.json", "generated.zig", "generated/contract.js", "generated/contract.d.ts", "uefi.zig", "firmware_pin.zig", "receipt_envelope.zig", "inventory_fingerprint.zig", "intent_normalization.zig" }) |name|
         export_package.addFileArg(b.path(b.fmt("protocol/{s}", .{name})));
     export_package.step.dependOn(&check.step);
     const install_protocol = b.addInstallDirectory(.{ .source_dir = protocol_directory, .install_dir = .prefix, .install_subdir = "share/pizza/protocol" });
-    const install_protocol_archive = b.addInstallFile(protocol_archive, "share/pizza/pizza-protocol-4.0.0.tar.gz");
+    const install_protocol_archive = b.addInstallFile(protocol_archive, "share/pizza/pizza-protocol-4.0.1.tar.gz");
     const protocol_step = b.step("protocol-package", "Export the independent v4 protocol package and fetchable archive");
     protocol_step.dependOn(&install_protocol.step);
     protocol_step.dependOn(&install_protocol_archive.step);
@@ -314,7 +314,7 @@ pub fn build(b: *std.Build) void {
         exe.root_module.addImport("bundle", core_bundle);
         exe.root_module.addImport("utils", core_utils);
         exe.root_module.addImport("journal", core_journal);
-        exe.root_module.addImport("session", core_session);
+        exe.root_module.addImport("legacy_handoff", core_session);
         exe.root_module.addImport("initramfs_archive", b.createModule(.{ .root_source_file = b.path("core/initramfs/archive.zig"), .target = target, .optimize = optimize, .imports = &.{.{ .name = "utils", .module = core_utils }} }));
         if (std.mem.eql(u8, entry[0], "pizza-init")) {
             exe.root_module.addImport("power", power);
@@ -420,12 +420,12 @@ pub fn build(b: *std.Build) void {
             .{ .name = "utils", .module = app_utils },
             .{ .name = "clap", .module = b.dependency("clap", .{ .target = app_target, .optimize = optimize }).module("clap") },
             .{ .name = "journal", .module = app_journal },
-            .{ .name = "session", .module = app_session },
+            .{ .name = "legacy_handoff", .module = app_session },
             .{ .name = "maintenance", .module = app_ui.maintenance },
             .{ .name = "execution_tui", .module = app_ui.tui },
         },
     });
-    application_module.addImport("restart", b.createModule(.{ .root_source_file = b.path("core/maintenance_session/restart.zig"), .target = app_target, .optimize = optimize, .link_libc = true, .imports = &.{ .{ .name = "proto", .module = app_proto }, .{ .name = "storage", .module = app_ui.storage }, .{ .name = "utils", .module = app_utils } } }));
+    application_module.addImport("restart", b.createModule(.{ .root_source_file = b.path("core/restart/restart.zig"), .target = app_target, .optimize = optimize, .link_libc = true, .imports = &.{ .{ .name = "proto", .module = app_proto }, .{ .name = "storage", .module = app_ui.storage }, .{ .name = "utils", .module = app_utils } } }));
     const application = maintenanceExecutable(b, "pizza-maint", application_module, optimize, app_ui.ext, app_ui.fat, app_ui.ntfs, app_ui.btrfs);
     application.producer.step.dependOn(&check.step);
     b.getInstallStep().dependOn(&b.addInstallFileWithDir(application.binary, .bin, "pizza-maint").step);
@@ -439,6 +439,8 @@ pub fn build(b: *std.Build) void {
             .{ .name = "maintenance", .module = app_ui.maintenance },
         },
     });
+    fixture_module.addImport("proto", app_proto);
+    fixture_module.addImport("storage", app_ui.storage);
     const maintenance_fixture = maintenanceExecutable(b, "pizza-maint-fixture", fixture_module, optimize, app_ui.ext, app_ui.fat, app_ui.ntfs, app_ui.btrfs);
     const install_fixture = b.addInstallFileWithDir(maintenance_fixture.binary, .bin, "pizza-maint-fixture");
     install_tests.dependOn(&install_fixture.step);
@@ -500,7 +502,7 @@ pub fn build(b: *std.Build) void {
     );
     compile_policy.configure(tests);
     tests.root_module.addImport("journal", core_journal);
-    tests.root_module.addImport("session", core_session);
+    tests.root_module.addImport("legacy_handoff", core_session);
     tests.root_module.addImport("initramfs_archive", b.createModule(.{ .root_source_file = b.path("core/initramfs/archive.zig"), .target = target, .optimize = optimize, .imports = &.{.{ .name = "utils", .module = core_utils }} }));
     const test_ui = executionModules(b, target, optimize, proto, core_utils, core_journal, core_session);
     tests.root_module.addImport("maintenance", test_ui.maintenance);
@@ -511,7 +513,9 @@ pub fn build(b: *std.Build) void {
         "Run Zig module/integration tests and frontend tests",
     );
     test_step.dependOn(&executor_guest.step);
-    test_step.dependOn(&b.addRunArtifact(tests).step);
+    const run_core_tests = b.addRunArtifact(tests);
+    test_step.dependOn(&run_core_tests.step);
+    b.step("test-core", "Run core subsystem unit tests independently of integration harnesses").dependOn(&run_core_tests.step);
     const maintenance_test_module = b.createModule(.{
         .root_source_file = b.path("core/maint/tests.zig"),
         .target = target,
@@ -520,6 +524,7 @@ pub fn build(b: *std.Build) void {
     });
     for (test_ui.maintenance.import_table.keys(), test_ui.maintenance.import_table.values()) |name, module|
         maintenance_test_module.addImport(name, module);
+    maintenance_test_module.addImport("execution_tui", test_ui.tui);
     const maintenance_tests = b.addTest(.{ .root_module = maintenance_test_module });
     compile_policy.configure(maintenance_tests);
     const run_maintenance_tests = b.addRunArtifact(maintenance_tests);
@@ -537,10 +542,10 @@ pub fn build(b: *std.Build) void {
     });
     const host_proto = b.createModule(.{ .root_source_file = b.path("protocol/root.zig"), .target = target, .optimize = optimize });
     const host_imports: []const std.Build.Module.Import = &.{ .{ .name = "proto", .module = host_proto }, .{ .name = "storage", .module = storage_module }, .{ .name = "utils", .module = core_utils } };
-    const host_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("core/maintenance_session/tests.zig"), .target = target, .optimize = optimize, .link_libc = true, .imports = host_imports }) });
+    const host_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("core/restart/tests.zig"), .target = target, .optimize = optimize, .link_libc = true, .imports = host_imports }) });
     compile_policy.configure(host_tests);
     b.step("test-session", "Verify offline compilation, recovery anchors and maintenance session safety").dependOn(&b.addRunArtifact(host_tests).step);
-    const session_image = b.addExecutable(.{ .name = "pizza-session-image", .root_module = b.createModule(.{ .root_source_file = b.path("core/maintenance_session/session_image.zig"), .target = target, .optimize = optimize, .link_libc = true, .imports = host_imports }) });
+    const session_image = b.addExecutable(.{ .name = "pizza-session-image", .root_module = b.createModule(.{ .root_source_file = b.path("core/restart/session_image.zig"), .target = target, .optimize = optimize, .link_libc = true, .imports = host_imports }) });
     compile_policy.configure(session_image);
     b.step("session-image", "Build the explicit regular-image maintenance session harness").dependOn(&b.addInstallArtifact(session_image, .{}).step);
     const session_fixture_storage = b.createModule(.{ .root_source_file = b.path("core/maint/storage/root.zig"), .target = target, .optimize = optimize, .imports = &.{.{ .name = "utils", .module = core_utils }} });
@@ -798,8 +803,7 @@ fn executionModules(
             .{ .name = "proto", .module = proto },
             .{ .name = "utils", .module = utils },
             .{ .name = "journal", .module = journal },
-            .{ .name = "execution_tui", .module = tui },
-            .{ .name = "session", .module = session },
+            .{ .name = "legacy_handoff", .module = session },
             .{ .name = "ext2fs_c", .module = ext.bindings },
             .{ .name = "fatfs_c", .module = fat.bindings },
             .{ .name = "ntfs_c", .module = ntfs.bindings },
@@ -899,7 +903,7 @@ fn sessionModule(
     utils: *std.Build.Module,
 ) *std.Build.Module {
     return b.createModule(.{
-        .root_source_file = b.path("core/session.zig"),
+        .root_source_file = b.path("core/legacy_handoff.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{ .{ .name = "proto", .module = proto }, .{ .name = "utils", .module = utils } },

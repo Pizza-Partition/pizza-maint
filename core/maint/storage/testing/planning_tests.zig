@@ -39,7 +39,7 @@ test "mutation compiler freezes backend bytes without writing and enforces prese
     var content: [512]u8 = @splat(0x29);
     const writes = [_]storage.mutation.Write{.{ .range = .{ .offset = 512, .length = 512 }, .content = &content }};
     const changes: storage.mutation.MutationSet = .{ .target = TARGET, .writes = &writes };
-    var builder = storage.program.Builder.init(a, disk.backend().reader());
+    var builder = storage.program.PhysicalProgramBuilder.init(a, disk.backend().reader());
     try builder.apply(IO, 0, changes, false);
     const plan = try builder.finish();
     @memset(&content, 0x8a);
@@ -52,7 +52,7 @@ test "mutation compiler freezes backend bytes without writing and enforces prese
     var malformed = writes;
     malformed[0].range.length = 1024;
     try std.testing.expectError(error.WriteLengthMismatch, builder.apply(IO, 0, .{ .target = TARGET, .writes = &malformed }, false));
-    var merged = storage.program.Builder.init(a, disk.backend().reader());
+    var merged = storage.program.PhysicalProgramBuilder.init(a, disk.backend().reader());
     try merged.apply(IO, 0, .{ .target = TARGET, .writes = &.{ writes[0], writes[0] } }, false);
     try std.testing.expectEqual(1, (try merged.finish()).steps.len);
     try std.testing.expectEqual(0, disk.writes);
@@ -70,8 +70,8 @@ test "owned partition reads are bounded and nested aliases are detected" {
     const change = try left.setSize(2048);
     try std.testing.expectEqual(4096, left.range.length);
     try std.testing.expectEqual(2048, change.range.length);
-    var builder = storage.program.Builder.init(std.testing.allocator, nested.reader());
-    var view: storage.program.Builder.View = .{ .builder = &builder, .version = 0, .range = .{ .offset = 512, .length = 512 } };
+    var builder = storage.program.PhysicalProgramBuilder.init(std.testing.allocator, nested.reader());
+    var view: storage.program.PhysicalProgramBuilder.View = .{ .builder = &builder, .version = 0, .range = .{ .offset = 512, .length = 512 } };
     try std.testing.expectEqual(1536, view.reader().location().range.offset);
     try std.testing.expect(view.reader().aliases(disk.backend().reader()));
 
@@ -104,7 +104,7 @@ test "direct mutations restore the post-move baseline before reversing relocatio
     var baseline: [8192]u8 = @splat(0);
     @memset(baseline[0..512], 0x34);
     var machine = try storage.testing.crash_model.Machine.init(a, TARGET, &baseline);
-    var builder = storage.program.Builder.init(a, machine.disk().reader());
+    var builder = storage.program.PhysicalProgramBuilder.init(a, machine.disk().reader());
     try builder.move(IO, 0, .{ .offset = 0, .length = 512 }, 2048);
     try builder.write(IO, .{ .offset = 2048, .length = 512 }, &@as([512]u8, @splat(0xaa)), false);
     const program = try builder.finish();
@@ -134,12 +134,12 @@ test "physical compiler rejects mutations for a different device or partition vi
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     var disk: Disk = .{};
-    var builder = storage.program.Builder.init(arena.allocator(), disk.backend().reader());
+    var builder = storage.program.PhysicalProgramBuilder.init(arena.allocator(), disk.backend().reader());
     var other = TARGET;
     other.identity = @splat(0x94);
     try std.testing.expectError(error.FilesystemProgramMismatch, builder.apply(IO, 0, .{ .target = other }, false));
-    var left: storage.program.Builder.View = .{ .builder = &builder, .version = 0, .range = .{ .offset = 512, .length = 2048 } };
-    var right: storage.program.Builder.View = .{ .builder = &builder, .version = 0, .range = .{ .offset = 4096, .length = 2048 } };
+    var left: storage.program.PhysicalProgramBuilder.View = .{ .builder = &builder, .version = 0, .range = .{ .offset = 512, .length = 2048 } };
+    var right: storage.program.PhysicalProgramBuilder.View = .{ .builder = &builder, .version = 0, .range = .{ .offset = 4096, .length = 2048 } };
     try std.testing.expect(!left.reader().target.same(right.reader().target));
     try std.testing.expectError(error.FilesystemProgramMismatch, builder.apply(IO, 4096, .{ .target = left.reader().target }, false));
 }
@@ -151,7 +151,7 @@ test "record relocation views preserve original provenance across overlapping ma
     var disk: Disk = .{};
     @memset(disk.bytes[0..512], 0x31);
     @memset(disk.bytes[512..1024], 0x52);
-    var records = storage.mutation.Builder.init(a, disk.backend().reader());
+    var records = storage.mutation.MutationBuilder.init(a, disk.backend().reader());
     defer records.deinit();
     try records.mapRelocation(IO, 0, 512, 512);
     try records.mapRelocation(IO, 512, 1024, 512);

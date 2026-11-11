@@ -3,19 +3,19 @@
 const std = @import("std");
 const format = @import("format.zig");
 const scanner = @import("scan.zig");
-const Builder = @import("../../mutation.zig").Builder;
+const MutationBuilder = @import("../../mutation.zig").MutationBuilder;
 const Reader = @import("../../device.zig").Reader;
 const MutationSet = @import("../../mutation.zig").MutationSet;
 
 pub fn prepareRepair(a: std.mem.Allocator, io: std.Io, reader: Reader, clusters: []const u32) !MutationSet {
-    var overlay = Builder.init(a, reader);
+    var overlay = MutationBuilder.init(a, reader);
     defer overlay.deinit();
     try repair(a, io, &overlay, clusters);
     _ = try scanner.load(a, io, overlay.reader(), false);
     return overlay.finish(io, false);
 }
 
-pub fn writeFat(a: std.mem.Allocator, io: std.Io, overlay: *Builder, g: format.Geometry, old: format.Geometry, fat: []const u8) !void {
+pub fn writeFat(a: std.mem.Allocator, io: std.Io, overlay: *MutationBuilder, g: format.Geometry, old: format.Geometry, fat: []const u8) !void {
     const previous = try a.alloc(u8, old.fatBytes());
     defer a.free(previous);
     const output = try a.alloc(u8, fat.len);
@@ -31,7 +31,7 @@ pub fn writeFat(a: std.mem.Allocator, io: std.Io, overlay: *Builder, g: format.G
         try overlay.stageWrite(io, g.fatOffset(@intCast(copy)), output);
     }
 }
-pub fn writeAux(a: std.mem.Allocator, io: std.Io, overlay: *Builder, g: format.Geometry, boot: []const u8, fat: []const u8) !void {
+pub fn writeAux(a: std.mem.Allocator, io: std.Io, overlay: *MutationBuilder, g: format.Geometry, boot: []const u8, fat: []const u8) !void {
     var free: u32 = 0;
     var next: u32 = 0xffffffff;
     for (2..@as(usize, g.clusters) + 2) |index| if (format.get32(fat, index * 4) & format.MASK == 0) {
@@ -50,7 +50,7 @@ pub fn writeAux(a: std.mem.Allocator, io: std.Io, overlay: *Builder, g: format.G
     }
 }
 
-fn repair(a: std.mem.Allocator, io: std.Io, overlay: *Builder, clusters: []const u32) !void {
+fn repair(a: std.mem.Allocator, io: std.Io, overlay: *MutationBuilder, clusters: []const u32) !void {
     var loaded = try scanner.load(a, io, overlay.reader(), true);
     if (loaded.graph.value(1) & 0x04000000 == 0) return error.FatSurfaceScanRequired;
     try salvage(a, io, overlay, &loaded.graph, clusters);
@@ -130,7 +130,7 @@ pub fn repairBytes(a: std.mem.Allocator, io: std.Io, reader: Reader, graph: *con
     const missing = @as(u64, files.len) -| slots;
     return try std.math.divCeil(u64, missing, graph.geometry.clusterBytes() / 32) * graph.geometry.clusterBytes();
 }
-fn salvage(a: std.mem.Allocator, io: std.Io, overlay: *Builder, graph: *scanner.Graph, clusters: []const u32) !void {
+fn salvage(a: std.mem.Allocator, io: std.Io, overlay: *MutationBuilder, graph: *scanner.Graph, clusters: []const u32) !void {
     const files = try lostFiles(a, graph);
     defer a.free(files);
     if (files.len == 0) return;

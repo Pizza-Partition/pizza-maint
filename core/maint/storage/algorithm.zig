@@ -97,7 +97,7 @@ pub fn prepare(a: std.mem.Allocator, fs: semantic.Filesystem, intent: semantic.I
     }
     return error.GeometryDidNotConverge;
 }
-pub fn append(a: std.mem.Allocator, io: std.Io, builder: *program.Builder, base: u64, prepared: Prepared) !void {
+pub fn append(a: std.mem.Allocator, io: std.Io, builder: *program.PhysicalProgramBuilder, base: u64, prepared: Prepared) !void {
     const input = builder.currentVersion();
     const Copy = struct { saved: u32, destination: u64 };
     var copies: std.ArrayList(Copy) = .empty;

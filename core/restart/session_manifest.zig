@@ -59,16 +59,16 @@ pub const Loaded = struct {
     /// only supplies authenticated provenance to its unchanged admission gate.
     pub fn admit(self: Loaded, a: std.mem.Allocator, io: std.Io, vars: uefi.Variables, disk: *storage.block_device.BlockDevice, initial: bool) !void {
         try self.binding.require(a, io, vars);
-        try disk.admitSession(a, io, self.compiled.bundle, self.metadata.anchor_path, self.metadata.anchor, initial);
+        try storage.session_admission.admitSession(disk, a, io, self.compiled.bundle, self.metadata.anchor_path, self.metadata.anchor, initial);
         if (self.metadata.receipt_anchor) |receipt_anchor| {
             try @import("esp_receipt.zig").validate(a, disk.target, self.compiled.bundle, self.metadata.anchor, receipt_anchor);
-            try disk.admitEspFile(a, io, self.compiled.bundle.digest(), receipt_anchor.path, receipt_anchor.proof, self.compiled.bundle.bootstrap_store.block_size);
+            try storage.session_admission.admitEspFile(disk, a, io, self.compiled.bundle.digest(), receipt_anchor.path, receipt_anchor.proof, self.compiled.bundle.bootstrap_store.block_size);
         }
     }
     pub fn arm(self: Loaded, a: std.mem.Allocator, io: std.Io, vars: uefi.Variables) !void {
         try self.binding.arm(a, io, vars, self.metadata.lease);
     }
-    pub fn receipt(self: Loaded, a: std.mem.Allocator, session: storage.maintenance_session.Session) !@import("proto").wire.CompletionReceipt {
+    pub fn receipt(self: Loaded, a: std.mem.Allocator, session: storage.recovery_session.RecoverySession) !@import("proto").wire.CompletionReceipt {
         if (!std.mem.eql(u8, &session.bundle.digest(), &self.compiled.bundle.digest()) or
             !std.mem.eql(u8, &session.disk.target.identity, &self.binding.disk_identity)) return error.SessionIdentityMismatch;
         const outcome: @FieldType(@import("proto").wire.CompletionReceipt, "outcome") = switch (session.phase) {
@@ -81,7 +81,7 @@ pub const Loaded = struct {
     }
     /// Production sink: the receipt file allocation is authenticated by the
     /// manifest and admitted independently from the recovery capsules.
-    pub fn finishOnEsp(self: Loaded, a: std.mem.Allocator, io: std.Io, vars: uefi.Variables, session: storage.maintenance_session.Session) !void {
+    pub fn finishOnEsp(self: Loaded, a: std.mem.Allocator, io: std.Io, vars: uefi.Variables, session: storage.recovery_session.RecoverySession) !void {
         const anchor = self.metadata.receipt_anchor orelse return error.MissingReceiptAnchor;
         const value = try self.receipt(a, session);
         var sink = try @import("esp_receipt.zig").EspReceipt.open(a, io, session.disk, anchor, self.compiled.bundle.bootstrap_store.block_size, .{ .id = value.id, .plan_digest = value.plan_digest, .program_digest = value.program_digest, .disk_identity = value.disk_identity, .image_digest = value.image_digest });
@@ -89,7 +89,7 @@ pub const Loaded = struct {
     }
     /// Keep the terminal receipt authenticated in firmware during the return
     /// boot. The host clears this pin only after its protected report readback.
-    pub fn finishPinned(self: Loaded, a: std.mem.Allocator, io: std.Io, vars: uefi.Variables, session: storage.maintenance_session.Session, request: @import("proto").Handoff.Request, request_bytes: []const u8) !void {
+    pub fn finishPinned(self: Loaded, a: std.mem.Allocator, io: std.Io, vars: uefi.Variables, session: storage.recovery_session.RecoverySession, request: @import("proto").Handoff.Request, request_bytes: []const u8) !void {
         const value = try self.receipt(a, session);
         const request_digest = self.metadata.request_digest orelse return error.MissingRequestProvenance;
         if (!std.mem.eql(u8, &request_digest, &storage.model.digest(request_bytes)) or !std.mem.eql(u8, request.id, value.id) or !std.mem.eql(u8, request.plan_digest, value.plan_digest) or !std.mem.eql(u8, request.image_digest, value.image_digest) or !std.mem.eql(u8, request.draft.disk_identity, value.disk_identity)) return error.SessionIdentityMismatch;
@@ -105,7 +105,7 @@ pub const Loaded = struct {
         try vars.set(a, io, .pizza_session, try terminal.encode(a));
         try self.metadata.lease.restore(a, io, vars);
     }
-    pub fn finish(self: Loaded, a: std.mem.Allocator, io: std.Io, vars: uefi.Variables, session: storage.maintenance_session.Session, sink: ReceiptSink) !void {
+    pub fn finish(self: Loaded, a: std.mem.Allocator, io: std.Io, vars: uefi.Variables, session: storage.recovery_session.RecoverySession, sink: ReceiptSink) !void {
         const value = try self.receipt(a, session);
         const bytes = try std.json.Stringify.valueAlloc(a, value, .{});
         const pinned = try vars.get(a, io, .pizza_session) != null;
@@ -121,7 +121,7 @@ pub const Loaded = struct {
             try sink.publish(sink.context, io, bytes);
         }
         if (!std.mem.eql(u8, bytes, try sink.read(sink.context, a, io))) return error.CompletionReceiptReadbackMismatch;
-        try self.binding.finish(a, io, vars, self.metadata.lease, session);
+        try @import("boot_binding.zig").finish(self.binding, a, io, vars, self.metadata.lease, session);
     }
 };
 pub fn seal(a: std.mem.Allocator, compiled: compiler.Compiled, anchor: storage.esp_anchor.Proof, path: []const storage.esp_anchor.ShortName, lease: uefi.Lease, image: storage.model.Digest) !Sealed {
@@ -135,7 +135,7 @@ pub fn sealRestart(a: std.mem.Allocator, compiled: compiler.Compiled, anchor: st
 }
 fn sealInternal(a: std.mem.Allocator, compiled: compiler.Compiled, anchor: storage.esp_anchor.Proof, path: []const storage.esp_anchor.ShortName, lease: uefi.Lease, image: storage.model.Digest, receipt_anchor: ?@import("esp_receipt.zig").Anchor, request_digest: ?storage.model.Digest, reservation: ?usize) !Sealed {
     const bundle = compiled.bundle;
-    try storage.block_device.validateSessionAnchor(a, bundle.bootstrap.target, bundle, anchor);
+    try storage.session_admission.validateSessionAnchor(a, bundle.bootstrap.target, bundle, anchor);
     const metadata: Metadata = .{ .request_digest = request_digest, .session = bundle.session, .approved_plan = bundle.bootstrap.request_digest, .image = image, .control = bundle.control, .bootstrap_store = bundle.bootstrap_store, .apply_store = bundle.apply_store, .cleanup_store = bundle.cleanup_store, .protected = bundle.protected, .anchor = anchor, .anchor_path = path, .lease = lease, .receipt_anchor = receipt_anchor, .bootstrap_verification = try Verification.save(a, compiled.bootstrap), .apply_verification = try Verification.save(a, compiled.apply), .cleanup_verification = try Verification.save(a, compiled.cleanup) };
     try validate(metadata, compiled);
     const json = try std.json.Stringify.valueAlloc(a, metadata, .{});
@@ -185,10 +185,10 @@ pub fn load(a: std.mem.Allocator, io: std.Io, vars: uefi.Variables, bytes: []con
         p.* = try storage.program.decode(a, bytes[offset..][0..length]);
         offset += length;
     }
-    const bundle: storage.maintenance_session.Bundle = .{ .session = metadata.session, .control = metadata.control, .bootstrap = programs[0], .apply = programs[1], .cleanup = programs[2], .bootstrap_store = metadata.bootstrap_store, .apply_store = metadata.apply_store, .cleanup_store = metadata.cleanup_store, .protected = metadata.protected };
+    const bundle: storage.recovery_session.Bundle = .{ .session = metadata.session, .control = metadata.control, .bootstrap = programs[0], .apply = programs[1], .cleanup = programs[2], .bootstrap_store = metadata.bootstrap_store, .apply_store = metadata.apply_store, .cleanup_store = metadata.cleanup_store, .protected = metadata.protected };
     const compiled: compiler.Compiled = .{ .allocator = a, .bundle = bundle, .bootstrap = try metadata.bootstrap_verification.restore(a, programs[0]), .apply = try metadata.apply_verification.restore(a, programs[1]), .cleanup = try metadata.cleanup_verification.restore(a, programs[2]) };
     try validate(metadata, compiled);
-    try storage.block_device.validateSessionAnchor(a, programs[0].target, bundle, metadata.anchor);
+    try storage.session_admission.validateSessionAnchor(a, programs[0].target, bundle, metadata.anchor);
     return .{ .metadata = metadata, .compiled = compiled, .binding = binding };
 }
 fn validate(metadata: Metadata, compiled: compiler.Compiled) !void {

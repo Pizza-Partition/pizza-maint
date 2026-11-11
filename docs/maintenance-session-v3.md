@@ -19,7 +19,7 @@
 在既有物理程序中加入这些范围的保留写入，使完整 before-image 在初始化盘尾日志之前进入 ESP 恢复容器。
 容量预检包含这部分程序和恢复记录；不会把“文件已搬走”等同于“原地址可直接丢弃”。
 
-`core/maint/storage/maintenance_session.zig` 将三个事务协调为持久状态机：
+`core/maint/storage/recovery_session.zig` 将三个事务协调为持久状态机：
 
 ```text
 prepared → bootstrapping → initialized → preparing_apply → applying → verified

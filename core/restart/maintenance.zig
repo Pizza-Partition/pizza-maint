@@ -3,16 +3,16 @@
 const std = @import("std");
 const storage = @import("storage");
 const wire = @import("proto").wire;
-const ms = storage.maintenance_session;
+const ms = storage.recovery_session;
 pub const Action = enum { prepare, bootstrap, apply, status, recover, undo, accept, cleanup };
-pub fn restoreBoot(a: std.mem.Allocator, io: std.Io, session: ms.Session, lease: @import("uefi.zig").Lease, variables: @import("uefi.zig").Variables) !void {
+pub fn restoreBoot(a: std.mem.Allocator, io: std.Io, session: ms.RecoverySession, lease: @import("uefi.zig").Lease, variables: @import("uefi.zig").Variables) !void {
     switch (session.phase) {
         .completed, .rolled_back, .failed_bootstrap => try lease.restore(a, io, variables),
         else => return error.MaintenanceStillOwnsBoot,
     }
 }
 pub fn run(a: std.mem.Allocator, io: std.Io, disk: storage.device.Device, bundle: ms.Bundle, action: Action, verifier: ?storage.program_executor.Verifier, observer: ?storage.program_executor.Observer) !wire.MaintenanceSession {
-    var session = if (action == .prepare) try ms.Session.prepare(a, io, disk, bundle) else try ms.Session.open(a, io, disk, bundle);
+    var session = if (action == .prepare) try ms.RecoverySession.prepare(a, io, disk, bundle) else try ms.RecoverySession.open(a, io, disk, bundle);
     switch (action) {
         .prepare, .status => {},
         .bootstrap => try session.bootstrap(io, verifier, observer),
@@ -24,7 +24,7 @@ pub fn run(a: std.mem.Allocator, io: std.Io, disk: storage.device.Device, bundle
     }
     return project(a, session);
 }
-pub fn project(a: std.mem.Allocator, session: ms.Session) !wire.MaintenanceSession {
+pub fn project(a: std.mem.Allocator, session: ms.RecoverySession) !wire.MaintenanceSession {
     return .{ .version = 4, .id = try a.dupe(u8, &std.fmt.bytesToHex(session.bundle.session, .lower)), .plan_digest = try a.dupe(u8, &std.fmt.bytesToHex(session.bundle.digest(), .lower)), .phase = switch (session.phase) {
         .preparing, .prepared => .prepared,
         .bootstrapping, .initialized => .bootstrapping,

@@ -61,7 +61,7 @@ jobs:
           mkdir -p dist
           cp config/bundle/release.json zig-out/share/pizza/release.json
           tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -czf dist/pizza-maint-x86_64.tar.gz -C zig-out/share/pizza maint.efi maint.efi.pizza.json maint.img maint.img.pizza.json vmlinuz protocol release.json
-          cp zig-out/share/pizza/pizza-protocol-4.0.0.tar.gz dist/
+          cp zig-out/share/pizza/pizza-protocol-4.0.1.tar.gz dist/
           cd dist
           sha256sum *.tar.gz > SHA256SUMS
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

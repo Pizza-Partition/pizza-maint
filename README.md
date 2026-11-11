@@ -53,7 +53,7 @@ Python。维护会话验收生成临时普通镜像，再在独立进程中调�
 | ---------------------------- | -------------------------------------------------- |
 | core/init                    | 静态 PID1、挂载、驱动加载与进程监护                |
 | core/maint                   | 维护状态、journal、storage 及执行后端              |
-| core/maintenance_session     | 离线查询与编译、ESP 恢复锚点、分阶段会话及引导绑定 |
+| core/restart                 | 离线查询与编译、ESP 恢复锚点、分阶段会话及引导绑定 |
 | ui/execution                 | 维护终端界面                                       |
 | protocol                     | 独立协议包                                         |
 | build/bundle、core/initramfs | 验证固定基础产物、组装应用层和 initramfs           |

@@ -28,7 +28,7 @@ fn txn(a: std.mem.Allocator) !storage.program.Program {
         }
     };
     const reader: storage.device.Reader = .{ .context = &TARGET, .target = TARGET, .vtable = &.{ .read = Baseline.read } };
-    var builder = storage.program.Builder.init(a, reader);
+    var builder = storage.program.PhysicalProgramBuilder.init(a, reader);
     try builder.write(std.testing.io, .{ .offset = 0, .length = 512 }, &fixture.NEW_A, false);
     try builder.write(std.testing.io, .{ .offset = 512, .length = 512 }, &fixture.NEW_B, false);
     try builder.write(std.testing.io, .{ .offset = 4096, .length = 2048 }, &REPLACEMENT, false);

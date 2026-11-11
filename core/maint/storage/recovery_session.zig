@@ -111,7 +111,7 @@ fn hashRange(h: *std.crypto.hash.sha2.Sha256, r: model.Range) void {
     h.update(&b);
 }
 
-pub const Session = struct {
+pub const RecoverySession = struct {
     allocator: std.mem.Allocator,
     disk: device.Device,
     bundle: Bundle,
@@ -121,11 +121,11 @@ pub const Session = struct {
 
     /// Only ESP-owned extents are initialized here. The tail capsule is not
     /// touched until the bootstrap transaction has freed and verified its area.
-    pub fn prepare(a: std.mem.Allocator, io: std.Io, disk: device.Device, bundle: Bundle) !Session {
+    pub fn prepare(a: std.mem.Allocator, io: std.Io, disk: device.Device, bundle: Bundle) !RecoverySession {
         try disk.authorizeMutation();
         try disk.validate(io);
         try bundle.validate(a, disk.target);
-        var self: Session = .{ .allocator = a, .disk = disk, .bundle = bundle, .phase = .prepared, .sequence = 0, .active = 1 };
+        var self: RecoverySession = .{ .allocator = a, .disk = disk, .bundle = bundle, .phase = .prepared, .sequence = 0, .active = 1 };
         const bytes = try a.alloc(u8, bundle.bootstrap_store.block_size);
         defer a.free(bytes);
         for (0..2) |i| {
@@ -144,7 +144,7 @@ pub const Session = struct {
         try self.initialize(io);
         return self;
     }
-    fn initialize(self: *Session, io: std.Io) !void {
+    fn initialize(self: *RecoverySession, io: std.Io) !void {
         const a = self.allocator;
         const bundle = self.bundle;
         const zero = try a.alloc(u8, bundle.bootstrap_store.block_size);
@@ -170,10 +170,10 @@ pub const Session = struct {
         try self.persist(io, .prepared);
         try self.persist(io, .prepared);
     }
-    pub fn open(a: std.mem.Allocator, io: std.Io, disk: device.Device, bundle: Bundle) !Session {
+    pub fn open(a: std.mem.Allocator, io: std.Io, disk: device.Device, bundle: Bundle) !RecoverySession {
         try disk.validate(io);
         try bundle.validate(a, disk.target);
-        var self: Session = .{ .allocator = a, .disk = disk, .bundle = bundle, .phase = .prepared, .sequence = 0, .active = 1 };
+        var self: RecoverySession = .{ .allocator = a, .disk = disk, .bundle = bundle, .phase = .prepared, .sequence = 0, .active = 1 };
         const bytes = try a.alloc(u8, bundle.bootstrap_store.block_size);
         defer a.free(bytes);
         for (0..2) |i| {
@@ -189,14 +189,14 @@ pub const Session = struct {
         if (self.sequence == 0) return error.InvalidSessionHeaders;
         return self;
     }
-    fn decode(self: Session, b: []const u8) !struct { sequence: u64, phase: Phase } {
+    fn decode(self: RecoverySession, b: []const u8) !struct { sequence: u64, phase: Phase } {
         if (!std.mem.eql(u8, b[0..8], "PZSES001") or !std.mem.eql(u8, b[16..48], &self.disk.target.identity) or !std.mem.eql(u8, b[48..80], &self.bundle.session) or !std.mem.eql(u8, b[80..112], &self.bundle.digest()) or !std.mem.eql(u8, b[b.len - 32 ..], &model.digest(b[0 .. b.len - 32])) or !std.mem.allEqual(u8, b[113 .. b.len - 32], 0)) return error.InvalidSessionHeader;
         const phase = std.enums.fromInt(Phase, b[112]) orelse return error.InvalidSessionHeader;
         const seq = std.mem.readInt(u64, b[8..16], .little);
         if (seq == 0) return error.InvalidSessionHeader;
         return .{ .sequence = seq, .phase = phase };
     }
-    fn persist(self: *Session, io: std.Io, phase: Phase) !void {
+    fn persist(self: *RecoverySession, io: std.Io, phase: Phase) !void {
         const block = self.bundle.bootstrap_store.block_size;
         const b = try self.allocator.alloc(u8, block);
         defer self.allocator.free(b);
@@ -220,14 +220,14 @@ pub const Session = struct {
         self.sequence = seq;
         self.active = next;
     }
-    pub fn bootstrap(self: *Session, io: std.Io, verifier: ?executor.Verifier, observer: ?executor.Observer) !void {
+    pub fn bootstrap(self: *RecoverySession, io: std.Io, verifier: ?executor.Verifier, observer: ?executor.Observer) !void {
         if (self.phase != .prepared) return error.InvalidSessionTransition;
         var cap = try self.capsule(io, self.bundle.bootstrap_store);
         try self.persist(io, .bootstrapping);
         try executor.executeDeferred(self.allocator, io, self.disk, cap.store(), self.bundle.bootstrap, &.{}, verifier, observer);
         try self.persist(io, .initialized);
     }
-    pub fn apply(self: *Session, io: std.Io, verifier: ?executor.Verifier, observer: ?executor.Observer) !void {
+    pub fn apply(self: *RecoverySession, io: std.Io, verifier: ?executor.Verifier, observer: ?executor.Observer) !void {
         if (self.phase != .initialized) return error.InvalidSessionTransition;
         // Mark the attempt first. A failure at any point is recovered, never
         // silently retried with the original user request.
@@ -237,20 +237,20 @@ pub const Session = struct {
         try executor.executeDeferred(self.allocator, io, self.disk, cap.store(), self.bundle.apply, &.{}, verifier, observer);
         try self.persist(io, .verified);
     }
-    pub fn undo(self: *Session, io: std.Io) !void {
+    pub fn undo(self: *RecoverySession, io: std.Io) !void {
         if (self.phase != .verified and self.phase != .initialized) return error.InvalidSessionTransition;
         try self.persist(io, if (self.phase == .verified) .undoing else .restoring_bootstrap);
         try self.recover(io);
     }
     /// Acceptance closes Undo durably before any cleanup writes are permitted.
-    pub fn accept(self: *Session, io: std.Io) !void {
+    pub fn accept(self: *RecoverySession, io: std.Io) !void {
         if (self.phase != .verified) return error.InvalidSessionTransition;
         var cap = try self.capsule(io, self.bundle.apply_store);
         if (try executor.recover(self.allocator, io, self.disk, cap.store(), null) != .verified) return error.TransactionNotAwaitingAcceptance;
         try self.persist(io, .accepted);
         try executor.accept(self.allocator, io, self.disk, cap.store());
     }
-    pub fn cleanup(self: *Session, io: std.Io, verifier: ?executor.Verifier, observer: ?executor.Observer) !void {
+    pub fn cleanup(self: *RecoverySession, io: std.Io, verifier: ?executor.Verifier, observer: ?executor.Observer) !void {
         if (self.phase != .accepted and self.phase != .failed_cleanup) return error.InvalidSessionTransition;
         var main = try self.capsule(io, self.bundle.apply_store);
         try executor.accept(self.allocator, io, self.disk, main.store());
@@ -267,7 +267,7 @@ pub const Session = struct {
         try executor.accept(self.allocator, io, self.disk, cap.store());
         try self.persist(io, .completed);
     }
-    fn initializeCleanup(self: *Session, io: std.Io) !void {
+    fn initializeCleanup(self: *RecoverySession, io: std.Io) !void {
         const desc = self.bundle.cleanup_store;
         const zero = try self.allocator.alloc(u8, desc.block_size);
         defer self.allocator.free(zero);
@@ -286,12 +286,12 @@ pub const Session = struct {
         _ = try Raw.format(self.allocator, io, self.disk, desc, Raw.limitsFor(try executor.reservation(self.allocator, self.bundle.cleanup, desc.block_size, true), desc.block_size));
         try self.persist(io, .accepted);
     }
-    fn capsule(self: *Session, io: std.Io, desc: Descriptor) !Raw {
+    fn capsule(self: *RecoverySession, io: std.Io, desc: Descriptor) !Raw {
         return Raw.open(self.allocator, io, self.disk, desc);
     }
     /// Recovery never reruns bootstrap/apply/cleanup. Incomplete execution is
     /// rolled back; completed execution resumes only its durable finalization.
-    pub fn recover(self: *Session, io: std.Io) !void {
+    pub fn recover(self: *RecoverySession, io: std.Io) !void {
         switch (self.phase) {
             .preparing => try self.initialize(io),
             .preparing_cleanup => try self.initializeCleanup(io),

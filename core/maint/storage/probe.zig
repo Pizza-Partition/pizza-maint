@@ -201,9 +201,9 @@ pub fn queryDevice(a: std.mem.Allocator, io: std.Io, path: []const u8, reader: @
     };
     var partitions: std.ArrayList(PartitionInfo) = .empty;
     if (layout) |table| {
-        var builder = @import("program.zig").Builder.init(a, reader);
+        var builder = @import("program.zig").PhysicalProgramBuilder.init(a, reader);
         for (table.entries) |entry| {
-            var view: @import("program.zig").Builder.View = .{ .builder = &builder, .version = 0, .range = entry.range };
+            var view: @import("program.zig").PhysicalProgramBuilder.View = .{ .builder = &builder, .version = 0, .range = entry.range };
             var filesystem_error: ?[]const u8 = null;
             const filesystem = filesystemInfo(a, io, view.reader()) catch |err| blk: {
                 filesystem_error = @errorName(err);

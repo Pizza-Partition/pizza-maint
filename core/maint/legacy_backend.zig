@@ -2,8 +2,7 @@
 const std = @import("std");
 const proto = @import("proto");
 const journal = @import("journal");
-const plan_module = @import("plan.zig");
-const tui = @import("execution_tui");
+const plan_module = @import("legacy_executor.zig");
 
 pub const Batch = struct { json: []const u8, last: u64, count: usize };
 pub const Backend = struct {
@@ -15,9 +14,8 @@ pub const Backend = struct {
     observed_stat: ?std.Io.File.Stat = null,
     executor: ?*plan_module.Executor = null,
     observed_offset: ?u64 = null,
-    dashboard: ?*tui.Dashboard = null,
     cancelled: bool = false,
-    journal_home: ?*@import("session").storage.Mounted = null,
+    journal_home: ?*@import("legacy_handoff").storage.Mounted = null,
 
     pub fn init(a: std.mem.Allocator, plan: ?proto.Plan, journal_path: ?[]const u8) Backend {
         return .{ .allocator = a, .arena = .init(a), .plan = plan, .journal_path = journal_path };
@@ -30,14 +28,6 @@ pub const Backend = struct {
     }
 
     pub fn tick(self: *Backend, io: std.Io) !void {
-        if (self.dashboard) |dashboard| {
-            const action = dashboard.poll() catch .detach;
-            if (action == .interrupt) {
-                self.cancelled = true;
-                if (self.executor) |executor| executor.cancel();
-            }
-            if (action == .detach) self.detachDashboard();
-        }
         if (self.executor) |executor| {
             try executor.tick(io, try journal.monotonicNow(io));
             self.plan = executor.plan;
@@ -46,13 +36,8 @@ pub const Backend = struct {
             if (engine.terminal()) try home.mark(self.allocator, io, if (engine.status == .succeeded) .completed else .failed);
         };
         try self.refresh(io);
-        if (self.dashboard) |dashboard| dashboard.draw(self.execution(), self.plan, self.snapshot, self.revision()) catch self.detachDashboard();
     }
-    fn detachDashboard(self: *Backend) void {
-        if (self.dashboard) |dashboard| dashboard.close();
-        self.dashboard = null;
-        if (self.executor) |executor| executor.options.console = true;
-    }
+
     pub fn execution(self: *const Backend) proto.wire.Execution {
         if (self.executor) |executor| return executor.view();
         var value: proto.wire.Execution = .{ .status = .view_only, .step_id = 0, .committed = 0, .total = if (self.plan) |plan| @intCast(plan.steps.len) else 0, .message = "Read-only journal view; execution disabled" };

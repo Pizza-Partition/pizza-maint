@@ -2,7 +2,7 @@
 const std = @import("std");
 const proto = @import("proto");
 const journal = @import("journal");
-const execution = @import("../plan.zig");
+const execution = @import("../legacy_executor.zig");
 const storage = @import("storage");
 const IO = std.testing.io;
 fn boundary(id: []const u8, home: []const u8) journal.Boundary {
@@ -30,7 +30,7 @@ test "production v2 executor formats an image and reopens committed recovery wit
     const plan: proto.Plan = .{ .id = "real_format", .version = proto.API_VERSION, .request = .{ .operation = .create, .target = .{ .path = path, .identity = try a.dupe(u8, &std.fmt.bytesToHex(identity, .lower)), .sector_size = 512, .kind = .image }, .filesystem = .vfat } };
     const directory = try std.Io.Dir.cwd().openDir(IO, home, .{});
     defer directory.close(IO);
-    var executor = try execution.Executor.start(a, IO, directory, plan, boundary(plan.id, home), 1, .{ .console = false, .devices = @import("devices.zig").PROVIDER });
+    var executor = try execution.Executor.start(a, IO, directory, plan, boundary(plan.id, home), 1, .{ .devices = @import("devices.zig").PROVIDER });
     try finish(&executor);
     try std.testing.expectEqual(.succeeded, executor.status);
     try std.testing.expect(executor.committed > 0 and executor.committed == executor.plan.steps.len);
@@ -44,14 +44,14 @@ test "production v2 executor formats an image and reopens committed recovery wit
     try std.testing.expect((try storage.filesystem.BUILTIN.check(a, IO, image.backend().reader())).consistent);
     const before = try (image.backend().reader()).digest(IO, .{ .offset = 0, .length = image.target.capacity });
     image.close(IO);
-    var recovered = try execution.Executor.start(a, IO, directory, plan, boundary(plan.id, home), 2, .{ .console = false, .devices = @import("devices.zig").PROVIDER });
+    var recovered = try execution.Executor.start(a, IO, directory, plan, boundary(plan.id, home), 2, .{ .devices = @import("devices.zig").PROVIDER });
     try finish(&recovered);
     try std.testing.expectEqual(.succeeded, recovered.status);
     recovered.close(IO);
     var different = plan;
     different.request.?.operation = .repair;
     different.request.?.filesystem = null;
-    var mismatch = try execution.Executor.start(a, IO, directory, different, boundary(plan.id, home), 3, .{ .console = false, .devices = @import("devices.zig").PROVIDER });
+    var mismatch = try execution.Executor.start(a, IO, directory, different, boundary(plan.id, home), 3, .{ .devices = @import("devices.zig").PROVIDER });
     try finish(&mismatch);
     try std.testing.expectEqual(.failed, mismatch.status);
     try std.testing.expectEqualStrings("RecoveryRequestMismatch", mismatch.message);
@@ -72,7 +72,7 @@ test "production block provider refuses ordinary files without preparing recover
     const path = try std.fs.path.join(a, &.{ home, "not-a-device.raw" });
     try directory.writeFile(IO, .{ .sub_path = "not-a-device.raw", .data = "unchanged" });
     const plan: proto.Plan = .{ .id = "physical_gate", .version = proto.API_VERSION, .request = .{ .operation = .create, .target = .{ .path = path, .identity = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", .sector_size = 512, .kind = .physical }, .filesystem = .vfat } };
-    var executor = try execution.Executor.start(a, IO, directory, plan, boundary(plan.id, home), 1, .{ .console = false });
+    var executor = try execution.Executor.start(a, IO, directory, plan, boundary(plan.id, home), 1, .{});
     defer executor.close(IO);
     try finish(&executor);
     try std.testing.expectEqual(.failed, executor.status);
@@ -90,7 +90,7 @@ test "production rejects image targets before opening a path or preparing recove
     const directory = try std.Io.Dir.cwd().openDir(IO, home, .{});
     defer directory.close(IO);
     const plan: proto.Plan = .{ .id = "image_gate", .version = proto.API_VERSION, .request = .{ .operation = .create, .target = .{ .path = "/must-not-open.raw", .identity = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", .sector_size = 512, .kind = .image }, .filesystem = .vfat } };
-    var executor = try execution.Executor.start(a, IO, directory, plan, boundary(plan.id, home), 1, .{ .console = false });
+    var executor = try execution.Executor.start(a, IO, directory, plan, boundary(plan.id, home), 1, .{});
     defer executor.close(IO);
     try finish(&executor);
     try std.testing.expectEqual(.failed, executor.status);
@@ -112,7 +112,7 @@ test "production cancellation reaches raw recovery before the worker is joined" 
     const plan: proto.Plan = .{ .id = "cancelled_format", .version = proto.API_VERSION, .request = .{ .operation = .create, .target = .{ .path = path, .identity = try a.dupe(u8, &std.fmt.bytesToHex(id, .lower)), .sector_size = 512, .kind = .image }, .filesystem = .vfat } };
     const directory = try std.Io.Dir.cwd().openDir(IO, home, .{});
     defer directory.close(IO);
-    var executor = try execution.Executor.start(a, IO, directory, plan, boundary(plan.id, home), 1, .{ .console = false, .devices = @import("devices.zig").PROVIDER });
+    var executor = try execution.Executor.start(a, IO, directory, plan, boundary(plan.id, home), 1, .{ .devices = @import("devices.zig").PROVIDER });
     defer executor.close(IO);
     executor.cancel();
     try finish(&executor);

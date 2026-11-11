@@ -74,7 +74,7 @@ flowchart TD
 | NTFS     | Zig 构造 NTFS 3.1 的系统记录和初始索引，解析并重编码 runlist、MFT/MFTMirr、位图和引导记录；复用 libntfs-3g 只读访问及固定编码数据。未构建 mkntfs/ntfsresize 的完整算法。             |
 | Btrfs    | Zig 创建、遍历及编码 SINGLE/DUP 元数据、chunk 映射、设备 extent 和超级块；库仅提供格式与 CRC32C 支持。                                                                               |
 
-低层记录编码有时需要可读的内存副本及 `mutation.Builder`，这些写入仅生成 MutationSet。它不是后端自行修改真实设备的通道，也不是执行一次完整上游缩扩容算法。没有宿主命令回退路径。测试中的 e2fsck、resize2fs、mtools、ntfsresize、ntfsfix、btrfs check/restore 等只用于构造夹具和独立验收。
+低层记录编码有时需要可读的内存副本及 `mutation.MutationBuilder`，这些写入仅生成 MutationSet。它不是后端自行修改真实设备的通道，也不是执行一次完整上游缩扩容算法。没有宿主命令回退路径。测试中的 e2fsck、resize2fs、mtools、ntfsresize、ntfsfix、btrfs check/restore 等只用于构造夹具和独立验收。
 
 ## 不可变物理程序
 

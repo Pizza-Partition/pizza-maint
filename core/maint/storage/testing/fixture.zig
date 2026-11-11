@@ -27,7 +27,7 @@ pub fn create(a: std.mem.Allocator, io: std.Io, root: []const u8) ![]const u8 {
 }
 
 pub fn compile(a: std.mem.Allocator, io: std.Io, reader: device.Reader) !program.Program {
-    var builder = program.Builder.init(a, reader);
+    var builder = program.PhysicalProgramBuilder.init(a, reader);
     try builder.write(io, .{ .offset = 0, .length = 512 }, &NEW_A, false);
     try builder.write(io, .{ .offset = 512, .length = 512 }, &NEW_B, false);
     return builder.finish();

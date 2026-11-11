@@ -81,7 +81,7 @@ test "NTFS refuses dirty and hibernated volumes without changing bytes" {
     var image = try Image.open(io, path, IDENTITY, 512);
     defer image.close(io);
     // Build a dirty but structurally intact volume in a fixture overlay.
-    var overlay = storage.mutation.Builder.init(a, image.reader());
+    var overlay = storage.mutation.MutationBuilder.init(a, image.reader());
     defer overlay.deinit();
     {
         const s = try ntfs.Session.open(a, io, overlay.reader(), &overlay);
@@ -183,7 +183,7 @@ test "NTFS preserves device errors and discards failed C planning sessions" {
     const reader: storage.device.Reader = .{ .context = &broken, .target = image.target, .vtable = &.{ .read = Broken.read } };
     try std.testing.expectError(error.OriginalNtfsReadFailure, ntfs.Session.open(a, io, reader, null));
     {
-        var overlay = storage.mutation.Builder.init(a, image.reader());
+        var overlay = storage.mutation.MutationBuilder.init(a, image.reader());
         defer overlay.deinit();
         overlay.max_cached_bytes = 512;
         try std.testing.expectError(error.StorageReadSetTooLarge, storage.testing.executor.prepare(REGISTRY, a, io, overlay.reader(), .{ .kind = .create, .filesystem = .ntfs }));

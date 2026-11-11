@@ -60,7 +60,7 @@ pub fn moveSystemToTail(a: std.mem.Allocator, io: std.Io, path: []const u8) !voi
 fn moveChunk(a: std.mem.Allocator, io: std.Io, path: []const u8, flags: u64) !void {
     var image = try Image.open(io, path, @import("../../fixture.zig").IDENTITY, 512);
     defer image.close(io);
-    var overlay = @import("../../../mutation.zig").Builder.init(a, image.reader());
+    var overlay = @import("../../../mutation.zig").MutationBuilder.init(a, image.reader());
     defer overlay.deinit();
     var graph = try btrfs.scan.load(a, io, overlay.reader(), true);
     var moved = false;

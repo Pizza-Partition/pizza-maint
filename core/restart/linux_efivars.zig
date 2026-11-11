@@ -24,8 +24,9 @@ pub const Efivars = struct {
         self.directory.close(io);
         self.* = undefined;
     }
+    const vtable: uefi.Variables.VTable = .{ .read = read, .write = write };
     pub fn variables(self: *Efivars) uefi.Variables {
-        return .{ .context = self, .read = read, .write = write };
+        return .{ .context = self, .vtable = &vtable };
     }
     fn filename(key: uefi.Variable, buffer: []u8) ![]const u8 {
         return switch (key) {
@@ -56,7 +57,7 @@ pub const Efivars = struct {
         var buffer: [80]u8 = undefined;
         return self.value(a, io, try filename(key, &buffer));
     }
-    fn write(ctx: *anyopaque, io: std.Io, key: uefi.Variable, bytes: ?[]const u8) !void {
+    fn write(ctx: *anyopaque, _: std.mem.Allocator, io: std.Io, key: uefi.Variable, bytes: ?[]const u8) !void {
         const self: *Efivars = @ptrCast(@alignCast(ctx));
         if (key == .current) return error.ReadOnlyFirmwareVariable;
         if (!self.writable or std.os.linux.geteuid() != 0) return error.FirmwareRequiresRoot;

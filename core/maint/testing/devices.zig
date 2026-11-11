@@ -1,7 +1,7 @@
 //! Test-only acquisition of ordinary-file devices for maintenance integration tests.
 const std = @import("std");
 const proto = @import("proto");
-const devices = @import("../devices.zig");
+const devices = if (@import("builtin").is_test) @import("../devices.zig") else @import("maintenance").devices;
 const ImageDevice = @import("storage").testing.ImageDevice;
 
 pub const PROVIDER: devices.Provider = .{ .open = open };

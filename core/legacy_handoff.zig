@@ -1,7 +1,7 @@
 //! Protected reboot handoff and durable transition identity. No secrets use cmdline.
 const std = @import("std");
 const proto = @import("proto");
-pub const storage = @import("session/storage.zig");
+pub const storage = @import("legacy_handoff/storage.zig");
 pub const REQUEST_PATH = "/etc/pizza/session.json";
 pub const PLAN_PATH = "/etc/pizza/plan.json";
 pub const MOUNT_PATH = "/run/pizza/journal";

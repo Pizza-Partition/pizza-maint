@@ -220,3 +220,14 @@ test "restart handoff frames reject padding changes, extra fields and oversized 
     try std.testing.expectError(error.InvalidHandoff, Handoff.body(padded, "PZREQ001", 16384, 4096));
     try std.testing.expectError(error.InvalidHandoff, Handoff.Terminal.decode(a, bytes[0 .. bytes.len - 1]));
 }
+
+pub const uefi = @import("uefi.zig");
+pub const firmware_pin = @import("firmware_pin.zig");
+pub const receipt_envelope = @import("receipt_envelope.zig");
+pub const inventory_fingerprint = @import("inventory_fingerprint.zig");
+pub const intent_normalization = @import("intent_normalization.zig");
+test {
+    std.testing.refAllDecls(uefi);
+    std.testing.refAllDecls(intent_normalization);
+    std.testing.refAllDecls(receipt_envelope);
+}

@@ -3,10 +3,8 @@ const std = @import("std");
 const proto = @import("proto");
 const journal = @import("journal");
 const storage = @import("storage");
-const tui = @import("execution_tui");
 const devices = @import("devices.zig");
 pub const Options = struct {
-    console: bool = true,
     devices: devices.Provider = .{},
     pub fn validate(_: Options) !void {}
 };
@@ -297,7 +295,6 @@ pub const Executor = struct {
             self.committed = committed;
             self.message = message;
             self.revision += 1;
-            if (self.options.console) tui.state(io, status, committed, @intCast(self.plan.steps.len), message);
         }
     }
     pub fn journalOffset(self: *Executor, io: std.Io) !u64 {

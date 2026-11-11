@@ -84,16 +84,16 @@ pub const Program = struct {
     }
 };
 
-pub const Builder = struct {
+pub const PhysicalProgramBuilder = struct {
     allocator: std.mem.Allocator,
     reader: devices.Reader,
     steps: std.ArrayList(Step) = .empty,
     guards: std.ArrayList(Guard) = .empty,
     evidence: std.ArrayList(Evidence) = .empty,
-    pub fn init(a: std.mem.Allocator, reader: devices.Reader) Builder {
+    pub fn init(a: std.mem.Allocator, reader: devices.Reader) PhysicalProgramBuilder {
         return .{ .allocator = a, .reader = reader };
     }
-    pub fn attest(self: *Builder, range: model.Range, snapshot: model.Snapshot, operation: model.Kind) !void {
+    pub fn attest(self: *PhysicalProgramBuilder, range: model.Range, snapshot: model.Snapshot, operation: model.Kind) !void {
         if (self.evidence.items.len == MAX_STEPS) return error.StorageProgramTooLarge;
         const features = try std.json.Stringify.valueAlloc(self.allocator, snapshot.features, .{});
         defer self.allocator.free(features);
@@ -101,23 +101,23 @@ pub const Builder = struct {
         defer self.allocator.free(capabilities);
         try self.evidence.append(self.allocator, .{ .range = range, .input_version = self.currentVersion(), .filesystem = snapshot.filesystem, .operation = operation, .checkpoint = snapshot.generation, .features_digest = model.digest(features), .capabilities_digest = model.digest(capabilities) });
     }
-    pub fn currentVersion(self: *const Builder) u32 {
+    pub fn currentVersion(self: *const PhysicalProgramBuilder) u32 {
         return @intCast(self.steps.items.len);
     }
-    fn append(self: *Builder, operation: Operation) !u32 {
+    fn append(self: *PhysicalProgramBuilder, operation: Operation) !u32 {
         if (self.steps.items.len == MAX_STEPS) return error.StorageProgramTooLarge;
         const id = self.currentVersion();
         const deps = if (id == 0) &.{} else try self.allocator.dupe(u32, &.{id - 1});
         try self.steps.append(self.allocator, .{ .operation = operation, .dependencies = deps });
         return id;
     }
-    pub fn guard(self: *Builder, io: std.Io, range: model.Range) !void {
+    pub fn guard(self: *PhysicalProgramBuilder, io: std.Io, range: model.Range) !void {
         for (self.guards.items) |g| if (std.meta.eql(g.range, range)) return;
         if (self.guards.items.len == MAX_STEPS) return error.StorageProgramTooLarge;
         try range.validate(self.reader.target.capacity, self.reader.target.sector_size);
         try self.guards.append(self.allocator, .{ .range = range, .expected = try (self.reader).digest(io, range) });
     }
-    pub fn write(self: *Builder, io: std.Io, range: model.Range, bytes: []const u8, discard: bool) !void {
+    pub fn write(self: *PhysicalProgramBuilder, io: std.Io, range: model.Range, bytes: []const u8, discard: bool) !void {
         try range.validate(self.reader.target.capacity, self.reader.target.sector_size);
         if (range.length != bytes.len) return error.WriteLengthMismatch;
         const granule = @max(self.reader.target.sector_size, self.reader.write_granule);
@@ -136,36 +136,36 @@ pub const Builder = struct {
         try self.guard(io, range);
         _ = try self.append(.{ .write = .{ .range = range, .content = try self.allocator.dupe(u8, bytes), .discard = discard } });
     }
-    pub fn save(self: *Builder, io: std.Io, source_version: u32, source: model.Range) !u32 {
+    pub fn save(self: *PhysicalProgramBuilder, io: std.Io, source_version: u32, source: model.Range) !u32 {
         if (source_version > self.steps.items.len) return error.InvalidDataVersion;
         try self.guard(io, source);
         return self.append(.{ .save = .{ .source = source, .source_version = source_version, .expected = try self.hashVersion(io, source_version, source) } });
     }
-    pub fn restore(self: *Builder, saved: u32, destination: u64) !void {
+    pub fn restore(self: *PhysicalProgramBuilder, saved: u32, destination: u64) !void {
         if (saved >= self.steps.items.len or self.steps.items[saved].operation != .save) return error.InvalidScratchReference;
         _ = try self.append(.{ .restore = .{ .saved_step = saved, .destination = destination } });
     }
-    pub fn move(self: *Builder, io: std.Io, source_version: u32, source: model.Range, destination: u64) !void {
+    pub fn move(self: *PhysicalProgramBuilder, io: std.Io, source_version: u32, source: model.Range, destination: u64) !void {
         try self.guard(io, .{ .offset = destination, .length = source.length });
         const saved = try self.save(io, source_version, source);
         try self.restore(saved, destination);
     }
-    pub fn copy(self: *Builder, io: std.Io, source: devices.Reader, range: model.Range, destination: u64) !model.Digest {
+    pub fn copy(self: *PhysicalProgramBuilder, io: std.Io, source: devices.Reader, range: model.Range, destination: u64) !model.Digest {
         if (std.mem.eql(u8, &source.location().identity, &self.reader.location().identity)) return error.CopyAliasesSource;
         try range.validate(source.target.capacity, source.target.sector_size);
         const expected = try (source).digest(io, range);
         _ = try self.append(.{ .copy = .{ .source = source.target, .range = range, .destination = destination, .expected = expected } });
         return expected;
     }
-    pub fn barrier(self: *Builder) !void {
+    pub fn barrier(self: *PhysicalProgramBuilder) !void {
         _ = try self.append(.{ .barrier = {} });
     }
     /// All sources in a MutationSet name its input version. Capturing sources
     /// first makes cycles and self-overlap explicit and safe.
-    pub fn apply(self: *Builder, io: std.Io, base: u64, changes: mutation.MutationSet, allow_discard: bool) !void {
+    pub fn apply(self: *PhysicalProgramBuilder, io: std.Io, base: u64, changes: mutation.MutationSet, allow_discard: bool) !void {
         return self.applyVersion(io, base, changes, allow_discard, self.currentVersion());
     }
-    pub fn applyVersion(self: *Builder, io: std.Io, base: u64, changes: mutation.MutationSet, allow_discard: bool, input: u32) !void {
+    pub fn applyVersion(self: *PhysicalProgramBuilder, io: std.Io, base: u64, changes: mutation.MutationSet, allow_discard: bool, input: u32) !void {
         if (input > self.currentVersion()) return error.InvalidDataVersion;
         try changes.target.validate();
         const scope: model.Range = .{ .offset = base, .length = changes.target.capacity };
@@ -223,7 +223,7 @@ pub const Builder = struct {
             try self.write(io, .{ .offset = keys[start], .length = bytes.len }, bytes, discard_mode orelse false);
         }
     }
-    pub fn readVersion(self: *const Builder, io: std.Io, at_version: u32, range: model.Range, out: []u8) anyerror!void {
+    pub fn readVersion(self: *const PhysicalProgramBuilder, io: std.Io, at_version: u32, range: model.Range, out: []u8) anyerror!void {
         if (at_version > self.steps.items.len or range.length != out.len) return error.InvalidDataVersion;
         try self.reader.readInto(io, range.offset, out);
         for (self.steps.items[0..at_version]) |step| {
@@ -248,7 +248,7 @@ pub const Builder = struct {
             }
         }
     }
-    pub fn hashVersion(self: *const Builder, io: std.Io, v: u32, range: model.Range) !model.Digest {
+    pub fn hashVersion(self: *const PhysicalProgramBuilder, io: std.Io, v: u32, range: model.Range) !model.Digest {
         var buffer: [65536]u8 = undefined;
         var hash = std.crypto.hash.sha2.Sha256.init(.{});
         var offset: u64 = 0;
@@ -260,7 +260,7 @@ pub const Builder = struct {
         }
         return hash.finalResult();
     }
-    pub fn finish(self: *Builder) !Program {
+    pub fn finish(self: *PhysicalProgramBuilder) !Program {
         var result: Program = .{ .evidence = try self.evidence.toOwnedSlice(self.allocator), .target = self.reader.target, .steps = try self.steps.toOwnedSlice(self.allocator), .guards = try self.guards.toOwnedSlice(self.allocator), .encoded = &.{}, .digest = undefined };
         try result.validate();
         result.encoded = try encode(self.allocator, result);
@@ -269,7 +269,7 @@ pub const Builder = struct {
     }
     /// A bounded reader of a selected plan version, for metadata queries only.
     pub const View = struct {
-        builder: *const Builder,
+        builder: *const PhysicalProgramBuilder,
         version: u32,
         range: model.Range,
         pub fn reader(self: *const View) devices.Reader {
@@ -316,7 +316,7 @@ pub const Preview = struct {
     }
     fn read(ctx: *const anyopaque, io: std.Io, offset: u64, bytes: []u8) !void {
         const self: *const Preview = @ptrCast(@alignCast(ctx));
-        var builder = Builder.init(std.heap.page_allocator, self.base);
+        var builder = PhysicalProgramBuilder.init(std.heap.page_allocator, self.base);
         // Borrowed only by readVersion; no list mutation or allocation occurs.
         builder.steps.items = @constCast(self.plan.steps);
         builder.steps.capacity = self.plan.steps.len;

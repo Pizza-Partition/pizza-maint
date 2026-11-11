@@ -1,7 +1,7 @@
 //! Explicit, independent ext4 journal media. Never formats or mounts original root.
 const std = @import("std");
 const linux = std.os.linux;
-const session = @import("../session.zig");
+const session = @import("../legacy_handoff.zig");
 const fs = @import("utils").filesystem;
 
 fn stat(fd: linux.fd_t) !linux.Statx {

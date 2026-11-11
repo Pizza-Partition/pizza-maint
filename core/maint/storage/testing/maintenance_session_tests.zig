@@ -1,6 +1,6 @@
 const std = @import("std");
 const storage = @import("storage");
-const ms = storage.maintenance_session;
+const ms = storage.recovery_session;
 const Machine = storage.testing.crash_model.Machine;
 const IO = std.testing.io;
 const Fixture = struct {
@@ -12,7 +12,7 @@ const Fixture = struct {
         const m = try a.create(Machine);
         m.* = try Machine.init(a, .{ .identity = @splat(0x67), .capacity = bytes.len, .sector_size = sector }, bytes);
         const content = try a.alloc(u8, sector);
-        var boot = storage.program.Builder.init(a, m.disk().reader());
+        var boot = storage.program.PhysicalProgramBuilder.init(a, m.disk().reader());
         @memset(content, 0x11);
         try boot.write(IO, .{ .offset = 0, .length = sector }, content, false);
         // Preserve original source bytes that the future raw work-store header
@@ -22,7 +22,7 @@ const Fixture = struct {
         try boot.write(IO, .{ .offset = 524288, .length = sector }, content, false);
         const bp = try boot.finish();
         @memset(m.live[0..sector], 0x11);
-        var apply = storage.program.Builder.init(a, m.disk().reader());
+        var apply = storage.program.PhysicalProgramBuilder.init(a, m.disk().reader());
         @memset(content, 0x22);
         try apply.write(IO, .{ .offset = 0, .length = sector }, content, false);
         @memset(content, 0x44);
@@ -30,7 +30,7 @@ const Fixture = struct {
         const ap = try apply.finish();
         @memset(m.live[0..sector], 0x22);
         @memset(m.live[8192..][0..sector], 0x44);
-        var clean = storage.program.Builder.init(a, m.disk().reader());
+        var clean = storage.program.PhysicalProgramBuilder.init(a, m.disk().reader());
         @memset(content, 0x33);
         try clean.write(IO, .{ .offset = 0, .length = sector }, content, false);
         const cp = try clean.finish();
@@ -47,11 +47,11 @@ const Fixture = struct {
             .cleanup_store = .{ .session = id, .block_size = 4096, .extents = &.{.{ .offset = 786432, .length = 196608 }} },
         } };
     }
-    fn prepare(self: Fixture, a: std.mem.Allocator) !ms.Session {
-        return ms.Session.prepare(a, IO, self.machine.disk(), self.bundle);
+    fn prepare(self: Fixture, a: std.mem.Allocator) !ms.RecoverySession {
+        return ms.RecoverySession.prepare(a, IO, self.machine.disk(), self.bundle);
     }
-    fn reopen(self: Fixture, a: std.mem.Allocator) !ms.Session {
-        return ms.Session.open(a, IO, self.machine.disk(), self.bundle);
+    fn reopen(self: Fixture, a: std.mem.Allocator) !ms.RecoverySession {
+        return ms.RecoverySession.open(a, IO, self.machine.disk(), self.bundle);
     }
 };
 
@@ -95,7 +95,7 @@ test "acceptance closes undo and cleanup reaches the exact final state" {
     try std.testing.expect(std.mem.allEqual(u8, f.machine.live[8192..8704], 0x44));
     var wrong = f.bundle;
     wrong.session = @splat(0x98);
-    try std.testing.expectError(error.SessionIdentityMismatch, ms.Session.open(a, IO, f.machine.disk(), wrong));
+    try std.testing.expectError(error.SessionIdentityMismatch, ms.RecoverySession.open(a, IO, f.machine.disk(), wrong));
 }
 fn failVerify(_: *const anyopaque, _: std.Io, _: storage.device.Reader) !bool {
     return false;
@@ -123,15 +123,15 @@ test "maintenance preflight rejects overlap and insufficient recovery before wri
     const f = try Fixture.init(a, 512);
     var bad = f.bundle;
     bad.apply_store.extents = f.bundle.bootstrap_store.extents;
-    try std.testing.expectError(error.OverlappingSessionStorage, ms.Session.prepare(a, IO, f.machine.disk(), bad));
+    try std.testing.expectError(error.OverlappingSessionStorage, ms.RecoverySession.prepare(a, IO, f.machine.disk(), bad));
     bad = f.bundle;
     bad.cleanup_store.extents = &.{.{ .offset = 786432, .length = 8192 }};
-    try std.testing.expectError(error.CapsuleTooSmall, ms.Session.prepare(a, IO, f.machine.disk(), bad));
+    try std.testing.expectError(error.CapsuleTooSmall, ms.RecoverySession.prepare(a, IO, f.machine.disk(), bad));
     try std.testing.expect(std.mem.allEqual(u8, f.machine.live, 0));
 }
 
 const Action = enum { bootstrap, apply, undo, accept, cleanup };
-fn stage(a: std.mem.Allocator, f: Fixture, action: Action) !ms.Session {
+fn stage(a: std.mem.Allocator, f: Fixture, action: Action) !ms.RecoverySession {
     var session = try f.prepare(a);
     if (action == .bootstrap) return session;
     try session.bootstrap(IO, null, null);
@@ -140,7 +140,7 @@ fn stage(a: std.mem.Allocator, f: Fixture, action: Action) !ms.Session {
     if (action == .cleanup) try session.accept(IO);
     return session;
 }
-fn perform(session: *ms.Session, action: Action) !void {
+fn perform(session: *ms.RecoverySession, action: Action) !void {
     switch (action) {
         .bootstrap => try session.bootstrap(IO, null, null),
         .apply => try session.apply(IO, null, null),

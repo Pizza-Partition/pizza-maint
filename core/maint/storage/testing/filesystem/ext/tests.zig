@@ -195,7 +195,7 @@ test "native shrink remaps a high directory inode and reseeds its checksums" {
     var image = try Image.open(io, path, IDENTITY, 512);
     defer image.close(io);
     {
-        var builder = storage.mutation.Builder.init(a, image.reader());
+        var builder = storage.mutation.MutationBuilder.init(a, image.reader());
         defer builder.deinit();
         const session = try ext.Session.openStaged(a, io, &builder);
         try session.check(ext.c_api.ext2fs_read_bitmaps(session.fs));

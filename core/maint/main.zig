@@ -1,12 +1,12 @@
 //! Ordinary maintenance application: business state and journal share one process.
 const std = @import("std");
 const clap = @import("clap");
-const business = @import("maintenance").backend;
+const business = @import("maintenance").legacy_backend;
 const proto = @import("proto");
 const journal = @import("journal");
-const plan_module = @import("maintenance").plan;
+const plan_module = @import("maintenance").legacy_executor;
 const tui = @import("execution_tui");
-const session = @import("session");
+const session = @import("legacy_handoff");
 const filesystem = @import("utils").filesystem;
 var stop_requested: std.atomic.Value(bool) = .init(false);
 fn requestStop(_: std.os.linux.SIG) callconv(.c) void {
@@ -113,7 +113,7 @@ pub fn runWithDevices(init: std.process.Init, devices: @import("maintenance").de
     if (parsed.args.tui != 0 and (parsed.args.@"no-tui" != 0 or no_ui)) return error.ConflictingTerminalOptions;
     if (parsed.args.@"tui-self-test" != 0 and (parsed.args.execute != 0 or parsed.args.@"self-test" != 0 or parsed.args.@"no-tui" != 0 or no_ui)) return error.ConflictingSelfTests;
     const force_tui = parsed.args.tui != 0 or parsed.args.@"tui-self-test" != 0;
-    const dashboard = if (!no_ui and parsed.args.@"no-tui" == 0 and (parsed.args.@"self-test" == 0 or force_tui)) tui.Dashboard.open(a, init.io, init.environ_map, force_tui) catch |err| blk: {
+    var dashboard = if (!no_ui and parsed.args.@"no-tui" == 0 and (parsed.args.@"self-test" == 0 or force_tui)) tui.Dashboard.open(a, init.io, init.environ_map, force_tui) catch |err| blk: {
         if (force_tui) return err;
         std.log.warn("Terminal dashboard unavailable: {t}; using console lines", .{err});
         break :blk null;
@@ -128,7 +128,7 @@ pub fn runWithDevices(init: std.process.Init, devices: @import("maintenance").de
     }
     const executing = parsed.args.execute != 0 or request != null;
     if (exit_after_plan and !executing) return error.ExitAfterPlanNeedsExecution;
-    const execution_options: plan_module.Options = .{ .devices = devices, .console = dashboard == null };
+    const execution_options: plan_module.Options = .{ .devices = devices };
     if (executing) try installStopSignals();
     try execution_options.validate();
     if (!executing and (parsed.args.@"journal-home" != null or parsed.args.@"exit-after-plan" != 0)) return error.ExecutionOptionNeedsExecute;
@@ -182,19 +182,43 @@ pub fn runWithDevices(init: std.process.Init, devices: @import("maintenance").de
     var backend = business.Backend.init(a, plan, journal_path);
     backend.executor = executor;
     if (persistent) |*home| backend.journal_home = home;
-    backend.dashboard = dashboard;
     defer backend.deinit();
     try backend.refresh(init.io);
     const started = try journal.monotonicNow(init.io);
     std.log.info("PIZZA_MEMORY_BUDGET: cache={d} reserve={d} work={d} recovery={d}", .{ startup_budget.budget.cache_bytes, startup_budget.budget.reserve, startup_budget.budget.work_reserve, startup_budget.budget.recovery_reserve });
     std.log.info("PIZZA_MAINT_BACKEND_READY: execute={}", .{executing});
+    var console_revision: u64 = 0;
     while (true) {
+        if (dashboard) |value| {
+            const action = value.poll() catch .detach;
+            if (action == .interrupt) {
+                backend.cancelled = true;
+                if (executor) |engine| engine.cancel();
+            }
+            if (action == .detach) {
+                value.close();
+                dashboard = null;
+            }
+        }
         if (stop_requested.load(.monotonic)) {
             backend.cancelled = true;
             if (executor) |value| value.cancel();
         }
         try startup_budget.check();
         backend.tick(init.io) catch |err| if (err != error.WouldBlock) std.log.err("Journal view: {t}", .{err});
+        if (dashboard) |value| {
+            value.draw(backend.execution(), backend.plan, backend.snapshot, backend.revision()) catch {
+                value.close();
+                dashboard = null;
+            };
+        }
+        if (dashboard == null) if (executor) |engine| {
+            if (engine.revision != console_revision) {
+                console_revision = engine.revision;
+                const view = engine.view();
+                tui.state(init.io, view.status, view.committed, view.total, view.message);
+            }
+        };
         if (backend.cancelled and (if (executor) |value| value.terminal() else true)) return 130;
         if (self_test and (if (executor) |value| value.terminal() else true)) {
             const evidence = try replayEvidence(a, &backend);
@@ -207,7 +231,7 @@ pub fn runWithDevices(init: std.process.Init, devices: @import("maintenance").de
         }
         if (self_test and try journal.monotonicNow(init.io) - started > @as(u64, parsed.args.timeout orelse 30) * std.time.ns_per_s) return error.BackendSelfTestTimedOut;
         if (exit_after_plan and executor.?.terminal()) return if (executor.?.status == .succeeded) 0 else 1;
-        try std.Io.sleep(init.io, .fromMilliseconds(if (executing) 10 else if (backend.dashboard != null) 50 else 1000), .awake);
+        try std.Io.sleep(init.io, .fromMilliseconds(if (executing) 10 else if (dashboard != null) 50 else 1000), .awake);
     }
 }
 

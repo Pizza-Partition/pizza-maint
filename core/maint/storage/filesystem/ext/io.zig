@@ -3,7 +3,7 @@
 const std = @import("std");
 pub const c_api = @import("ext2fs_c");
 const Reader = @import("../../device.zig").Reader;
-const Builder = @import("../../mutation.zig").Builder;
+const MutationBuilder = @import("../../mutation.zig").MutationBuilder;
 
 pub const Session = struct {
     allocator: std.mem.Allocator,
@@ -13,17 +13,17 @@ pub const Session = struct {
     channel: c_api.struct_io_channel,
     name: [:0]u8,
     failure: ?anyerror = null,
-    overlay: ?*Builder = null,
+    overlay: ?*MutationBuilder = null,
 
     pub fn open(a: std.mem.Allocator, io: std.Io, reader: Reader) !*Session {
         return openMode(a, io, reader, null);
     }
 
-    pub fn openStaged(a: std.mem.Allocator, io: std.Io, overlay: *Builder) !*Session {
+    pub fn openStaged(a: std.mem.Allocator, io: std.Io, overlay: *MutationBuilder) !*Session {
         return openMode(a, io, overlay.reader(), overlay);
     }
 
-    fn openMode(a: std.mem.Allocator, io: std.Io, reader: Reader, overlay: ?*Builder) !*Session {
+    fn openMode(a: std.mem.Allocator, io: std.Io, reader: Reader, overlay: ?*MutationBuilder) !*Session {
         try reader.target.validate();
         try preflight(io, reader);
         const self = try allocate(a, io, reader, overlay);
@@ -33,7 +33,7 @@ pub const Session = struct {
         return self;
     }
 
-    fn allocate(a: std.mem.Allocator, io: std.Io, reader: Reader, overlay: ?*Builder) !*Session {
+    fn allocate(a: std.mem.Allocator, io: std.Io, reader: Reader, overlay: ?*MutationBuilder) !*Session {
         const self = try a.create(Session);
         errdefer a.destroy(self);
         const label = try a.print("pizza-reader:{x}", .{@intFromPtr(self)});

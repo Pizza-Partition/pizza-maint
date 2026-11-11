@@ -2,7 +2,7 @@
 const std = @import("std");
 pub const c_api = @import("ntfs_c");
 const Reader = @import("../../device.zig").Reader;
-const Builder = @import("../../mutation.zig").Builder;
+const MutationBuilder = @import("../../mutation.zig").MutationBuilder;
 const format = @import("format.zig");
 extern "c" fn __errno_location() *c_int;
 extern "c" fn pizza_ntfs_mount_core(c_int) ?*c_api.ntfs_volume;
@@ -16,12 +16,12 @@ pub const Session = struct {
     arena: std.heap.ArenaAllocator,
     io: std.Io,
     reader: Reader,
-    overlay: ?*Builder,
+    overlay: ?*MutationBuilder,
     volume: ?*c_api.ntfs_volume = null,
     failure: ?anyerror = null,
     allocated: usize = 0,
     position: i64 = 0,
-    pub fn start(a: std.mem.Allocator, io: std.Io, reader: Reader, overlay: ?*Builder) !*Session {
+    pub fn start(a: std.mem.Allocator, io: std.Io, reader: Reader, overlay: ?*MutationBuilder) !*Session {
         try reader.target.validate();
         if (reader.target.capacity > std.math.maxInt(i64)) return error.NtfsInvalidGeometry;
         try mutex.lock(io);
@@ -31,7 +31,7 @@ pub const Session = struct {
         current = self;
         return self;
     }
-    pub fn open(a: std.mem.Allocator, io: std.Io, reader: Reader, overlay: ?*Builder) !*Session {
+    pub fn open(a: std.mem.Allocator, io: std.Io, reader: Reader, overlay: ?*MutationBuilder) !*Session {
         const g = try format.load(io, reader);
         try g.budget();
         const self = try start(a, io, reader, overlay);

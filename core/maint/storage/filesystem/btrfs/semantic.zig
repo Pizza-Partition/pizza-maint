@@ -4,7 +4,7 @@ const semantic = @import("../../semantic.zig");
 const model = @import("../../model.zig");
 const device = @import("../../device.zig");
 const mutation = @import("../../mutation.zig");
-const Builder = @import("../../mutation.zig").Builder;
+const MutationBuilder = @import("../../mutation.zig").MutationBuilder;
 const root = @import("root.zig");
 const format = @import("format.zig");
 const scan = @import("scan.zig");
@@ -131,7 +131,7 @@ fn encode(ctx: *anyopaque, intent: semantic.Intent, desired: semantic.Geometry, 
             if (p.ranges.len != 1 or p.ranges[0].length != (if (id == 1) create.SYSTEM_LENGTH else create.MIXED_LENGTH)) return error.InvalidChunkPlacement;
             if (id == 1) layout.system_physical = p.ranges[0].offset else layout.mixed_physical = p.ranges[0].offset;
         }
-        var builder = Builder.init(state.a, state.reader);
+        var builder = MutationBuilder.init(state.a, state.reader);
         defer builder.deinit();
         try create.create(state.a, state.io, &builder, layout);
         _ = try scan.load(state.a, state.io, builder.reader(), true);
@@ -156,7 +156,7 @@ fn encode(ctx: *anyopaque, intent: semantic.Intent, desired: semantic.Geometry, 
         stripe.physical = dest;
         format.put(format.STRIPE, "offset", chunk.raw[@offsetOf(format.CHUNK, "stripe") + i * @sizeOf(format.STRIPE) ..], dest);
     };
-    var builder = Builder.init(state.a, state.reader);
+    var builder = MutationBuilder.init(state.a, state.reader);
     defer builder.deinit();
     try root.mutate.rewrite(state.a, state.io, &builder, g, desired.bytes);
     return builder.finish(state.io, false);

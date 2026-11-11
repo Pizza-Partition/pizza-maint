@@ -40,8 +40,8 @@ pub fn inspect(a: std.mem.Allocator, io: std.Io, disk: storage.device.Reader, es
         if (name[0] == ' ' or name[0] == '.') return error.InvalidAnchorPath;
         for (name) |ch| if (!(ch >= 'A' and ch <= 'Z') and !std.ascii.isDigit(ch) and ch != ' ' and ch != '_' and ch != '-') return error.InvalidAnchorPath;
     }
-    var builder = storage.program.Builder.init(a, disk);
-    var view: storage.program.Builder.View = .{ .builder = &builder, .version = 0, .range = esp };
+    var builder = storage.program.PhysicalProgramBuilder.init(a, disk);
+    var view: storage.program.PhysicalProgramBuilder.View = .{ .builder = &builder, .version = 0, .range = esp };
     const reader = view.reader();
     const loaded = try fat.scan.load(a, io, reader, false);
     const g = loaded.graph.geometry;
@@ -124,7 +124,7 @@ test "offline anchor proof follows a checked FAT chain and permits only content 
     var empty = try storage.program.Preview.init(zero, created.program);
     const loaded = try fat.scan.load(a, io, empty.reader(), false);
     const g = loaded.graph.geometry;
-    var builder = storage.program.Builder.init(a, empty.reader());
+    var builder = storage.program.PhysicalProgramBuilder.init(a, empty.reader());
     var first: u32 = 3;
     while (try g.offset(first) % 4096 != 0) first += 1;
     const clusters = @max(@as(u32, 1), 16384 / g.clusterBytes());
@@ -151,7 +151,7 @@ test "offline anchor proof follows a checked FAT chain and permits only content 
     try std.testing.expectEqual(length, proof.bytes);
     try std.testing.expectEqual(1, proof.extents.len);
     _ = try revalidate(a, io, reserved.reader(), path, 4096, proof, true);
-    var initialized = storage.program.Builder.init(a, reserved.reader());
+    var initialized = storage.program.PhysicalProgramBuilder.init(a, reserved.reader());
     const header: [4096]u8 = @splat(0x64);
     try initialized.write(io, .{ .offset = proof.extents[0].offset, .length = header.len }, &header, false);
     var changed = try storage.program.Preview.init(reserved.reader(), try initialized.finish());

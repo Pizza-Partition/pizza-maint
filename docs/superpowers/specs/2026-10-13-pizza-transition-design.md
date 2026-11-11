@@ -263,7 +263,7 @@ core/transition/   暂存、kexec 加载、systemd 切换和只读 report
 core/initramfs/    应用/console newc 层与基础镜像合并
 core/init/         静态 PID 1、模块、监护与内存采样
 core/maint/        普通应用、Backend、模拟 Executor 和 journal
-core/session*     受保护交接、持久 marker、日志设备校验与挂载
+core/legacy_handoff*     受保护交接、持久 marker、日志设备校验与挂载
 core/bundle/      运行环境路径约束
 build/bundle/     发布验证、应用 ELF 契约、overlay 组装和归档
 ui/execution/tui/ 当前维护显示

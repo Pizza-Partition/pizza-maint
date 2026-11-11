@@ -256,7 +256,7 @@ test "filesystem planning gates capabilities, dirty snapshots and mismatched out
 }
 
 test "staging captures original partial sectors and rejects stale reads outside its writes" {
-    const Builder = storage.mutation.Builder;
+    const MutationBuilder = storage.mutation.MutationBuilder;
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -268,7 +268,7 @@ test "staging captures original partial sectors and rejects stale reads outside 
     defer image.close(io);
     var directory = try std.Io.Dir.cwd().openDir(io, home, .{});
     defer directory.close(io);
-    var overlay = Builder.init(a, image.reader());
+    var overlay = MutationBuilder.init(a, image.reader());
     defer overlay.deinit();
     var before: [1536]u8 = undefined;
     try image.reader().readInto(io, 0, &before);
@@ -291,7 +291,7 @@ test "staging captures original partial sectors and rejects stale reads outside 
     try overlay.reader().readInto(io, 500, &relocated);
     try std.testing.expectEqualSlices(u8, &@as([32]u8, @splat(0xa5)), &relocated);
     const changes = try overlay.finish(io, false);
-    var builder = storage.program.Builder.init(a, image.reader());
+    var builder = storage.program.PhysicalProgramBuilder.init(a, image.reader());
     try builder.apply(io, 0, changes, false);
     const plan = try builder.finish();
     var original: [1536]u8 = undefined;

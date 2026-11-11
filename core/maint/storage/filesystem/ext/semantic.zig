@@ -4,7 +4,7 @@ const semantic = @import("../../semantic.zig");
 const model = @import("../../model.zig");
 const device = @import("../../device.zig");
 const mutation = @import("../../mutation.zig");
-const Builder = @import("../../mutation.zig").Builder;
+const MutationBuilder = @import("../../mutation.zig").MutationBuilder;
 const root = @import("root.zig");
 const c_api = root.c_api;
 const create = @import("create.zig");
@@ -317,7 +317,7 @@ fn little(comptime T: type, bytes: []const u8, at: usize) T {
 }
 /// Changing an inode identity changes the checksum seed of its tree records.
 /// Validate against the old identity, then encode the explicitly chosen new one.
-fn reseedExtents(state: *State, builder: *Builder, map: *Mapping, fs: c_api.ext2_filsys, old: u32, number: u32, header: []const u8, depth: usize) anyerror!void {
+fn reseedExtents(state: *State, builder: *MutationBuilder, map: *Mapping, fs: c_api.ext2_filsys, old: u32, number: u32, header: []const u8, depth: usize) anyerror!void {
     if (header.len < 12 or depth > 5 or little(u16, header, 0) != 0xf30a) return error.ExtInvalidExtentTree;
     const count = little(u16, header, 2);
     const level = little(u16, header, 6);
@@ -350,7 +350,7 @@ const DirectoryBlocks = struct {
         return 0;
     }
 };
-fn reseedDirectory(state: *State, builder: *Builder, map: *Mapping, fs: c_api.ext2_filsys, old: u32, number: u32) !void {
+fn reseedDirectory(state: *State, builder: *MutationBuilder, map: *Mapping, fs: c_api.ext2_filsys, old: u32, number: u32) !void {
     const original = try state.load();
     var blocks: DirectoryBlocks = .{ .a = state.a };
     defer blocks.blocks.deinit(state.a);
@@ -371,7 +371,7 @@ fn encode(ctx: *anyopaque, intent: semantic.Intent, desired: semantic.Geometry, 
     if (intent.operation == .repair) return @import("mutate.zig").prepare(.repair, state.a, state.io, state.reader, state.snapshot, 0);
     if (desired.bytes == state.snapshot.filesystem_bytes) return .{ .target = state.reader.target };
     const g = state.desired.?;
-    var builder = Builder.init(state.a, state.reader);
+    var builder = MutationBuilder.init(state.a, state.reader);
     defer builder.deinit();
     var map: Mapping = .{ .blocks = .init(state.a), .inode_map = .init(state.a), .spare = &.{}, .block_size = desired.allocation_size };
     defer map.blocks.deinit();
@@ -531,7 +531,7 @@ fn verify(ctx: *anyopaque, intent: semantic.Intent, reader: device.Reader) !mode
 }
 const OPS: semantic.FilesystemOps = .{ .close = close, .inspect = inspect, .enumerate_objects = object, .enumerate_allocations = allocation, .describe_geometry = geometry, .requirements = requirements, .encode_changes = encode, .check = check, .verify = verify };
 
-const Orphan = struct { state: *State, session: *Session, builder: *Builder, mapping: *Mapping, old_number: u32, number: u32, failure: ?anyerror = null };
+const Orphan = struct { state: *State, session: *Session, builder: *MutationBuilder, mapping: *Mapping, old_number: u32, number: u32, failure: ?anyerror = null };
 fn reseedOrphan(_: c_api.ext2_filsys, block: [*c]c_api.blk64_t, logical: c_api.e2_blkcnt_t, _: c_api.blk64_t, _: c_int, ctx: ?*anyopaque) callconv(.c) c_int {
     const value: *Orphan = @ptrCast(@alignCast(ctx.?));
     if (logical < 0 or block.* == 0) return 0;

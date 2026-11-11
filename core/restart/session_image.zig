@@ -1,5 +1,6 @@
 //! Explicit ordinary-image acceptance harness. Block devices and symlinks are
 //! rejected by ImageDevice; this is deliberately separate from the root helper.
+pub const enable_storage_test_support = true;
 const std = @import("std");
 const storage = @import("storage");
 const maintenance = @import("maintenance.zig");
@@ -94,7 +95,7 @@ pub fn main(init: std.process.Init) !u8 {
     const action = std.meta.stringToEnum(maintenance.Action, args[1]) orelse return error.UnknownMaintenanceAction;
     const manifest = try std.json.parseFromSliceLeaky(Manifest, a, try std.Io.Dir.cwd().readFileAlloc(io, args[2], a, .limited(4 * 1024 * 1024)), .{});
     if (manifest.version != 1) return error.UnsupportedSessionManifest;
-    const bundle: storage.maintenance_session.Bundle = .{ .session = try @import("proto").hexDigest(manifest.session), .control = manifest.control, .bootstrap = try load(a, io, manifest.bootstrap_program), .apply = try load(a, io, manifest.apply_program), .cleanup = try load(a, io, manifest.cleanup_program), .bootstrap_store = manifest.bootstrap_store, .apply_store = manifest.apply_store, .cleanup_store = manifest.cleanup_store, .protected = manifest.protected };
+    const bundle: storage.recovery_session.Bundle = .{ .session = try @import("proto").hexDigest(manifest.session), .control = manifest.control, .bootstrap = try load(a, io, manifest.bootstrap_program), .apply = try load(a, io, manifest.apply_program), .cleanup = try load(a, io, manifest.cleanup_program), .bootstrap_store = manifest.bootstrap_store, .apply_store = manifest.apply_store, .cleanup_store = manifest.cleanup_store, .protected = manifest.protected };
     var image = if (action == .status) try storage.testing.ImageDevice.openReadOnly(io, args[3], bundle.bootstrap.target.identity, bundle.bootstrap.target.sector_size) else try storage.testing.ImageDevice.open(io, args[3], bundle.bootstrap.target.identity, bundle.bootstrap.target.sector_size);
     defer image.close(io);
     const compiled: compiler.Compiled = .{ .bundle = bundle, .allocator = a, .bootstrap = try manifest.bootstrap_verification.restore(a, bundle.bootstrap), .apply = try manifest.apply_verification.restore(a, bundle.apply), .cleanup = try manifest.cleanup_verification.restore(a, bundle.cleanup) };

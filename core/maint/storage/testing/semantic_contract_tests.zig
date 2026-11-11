@@ -69,7 +69,7 @@ test "common shrink allocates data and growing metadata demands through semantic
     try std.testing.expectEqual(2, prepared.placements.len);
     try std.testing.expectEqual(512, prepared.placements[0].ranges[0].offset);
     try std.testing.expectEqual(1024, prepared.placements[1].ranges[0].offset);
-    var builder = storage.program.Builder.init(a, machine.disk().reader());
+    var builder = storage.program.PhysicalProgramBuilder.init(a, machine.disk().reader());
     try storage.algorithm.append(a, IO, &builder, 0, prepared);
     const program = try builder.finish();
     try std.testing.expectEqualSlices(u8, &baseline, machine.live);

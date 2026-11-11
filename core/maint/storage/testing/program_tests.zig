@@ -11,7 +11,7 @@ const BASELINE = init: {
 const TARGET: model.Target = .{ .identity = @splat(0x69), .capacity = BASELINE.len, .sector_size = 512 };
 const UPDATED: [512]u8 = @splat(0x87);
 fn program(a: std.mem.Allocator, machine: *Machine) !storage.program.Program {
-    var b = storage.program.Builder.init(a, machine.disk().reader());
+    var b = storage.program.PhysicalProgramBuilder.init(a, machine.disk().reader());
     try b.write(IO, .{ .offset = 0, .length = 512 }, &UPDATED, false);
     // Version 0 remains accessible after an earlier write and a cyclic swap.
     const original_a = try b.save(IO, 0, .{ .offset = 0, .length = 512 });
@@ -141,7 +141,7 @@ test "MBR layout edits preserve identity and boot code and reject logical partit
     const changes = try driver.encodeLayout(a, layout, entries);
     try std.testing.expectEqual(1, changes.writes.len);
     try std.testing.expectEqualSlices(u8, bytes[0..446], changes.writes[0].content[0..446]);
-    var b = storage.program.Builder.init(a, m.disk().reader());
+    var b = storage.program.PhysicalProgramBuilder.init(a, m.disk().reader());
     try b.apply(IO, 0, changes, false);
     try storage.program_executor.execute(a, IO, m.disk(), m.store(), try b.finish(), null, null);
     const after = try driver.readLayout(a, IO, m.disk().reader());
@@ -196,7 +196,7 @@ test "GPT updates both copies and detects CRC and mirror disagreement" {
     entries[1].range = .{ .offset = 64 * 512, .length = 10 * 512 };
     const changes = try driver.encodeLayout(a, layout, entries);
     try std.testing.expectEqual(4, changes.writes.len);
-    var b = storage.program.Builder.init(a, m.disk().reader());
+    var b = storage.program.PhysicalProgramBuilder.init(a, m.disk().reader());
     try b.apply(IO, 0, changes, false);
     const p = try b.finish();
     const Stop = struct {
@@ -238,7 +238,7 @@ test "cancellation during undo streaming stops before destructive intent" {
     var disk_target = TARGET;
     disk_target.capacity = original.len;
     var machine = try Machine.init(a, disk_target, original);
-    var builder = storage.program.Builder.init(a, machine.disk().reader());
+    var builder = storage.program.PhysicalProgramBuilder.init(a, machine.disk().reader());
     try builder.write(IO, .{ .offset = 0, .length = original.len }, replacement, false);
     const plan = try builder.finish();
     const Stop = struct {
@@ -276,7 +276,7 @@ test "deferred execution survives power loss and explicit undo preserves formatt
     defer arena.deinit();
     const a = arena.allocator();
     var m = try Machine.init(a, TARGET, &BASELINE);
-    var b = storage.program.Builder.init(a, m.disk().reader());
+    var b = storage.program.PhysicalProgramBuilder.init(a, m.disk().reader());
     try b.write(IO, .{ .offset = 0, .length = 512 }, &UPDATED, true);
     const p = try b.finish();
     const deferred = try storage.program_executor.reservation(a, p, 4096, true);
@@ -381,7 +381,7 @@ test "512e writes retain neighboring logical sectors in the physical before-imag
     var m = try Machine.init(a, TARGET, &BASELINE);
     var disk = m.disk();
     disk.write_granule = 4096;
-    var builder = storage.program.Builder.init(a, disk.reader());
+    var builder = storage.program.PhysicalProgramBuilder.init(a, disk.reader());
     const bytes: [512]u8 = @splat(0x91);
     try builder.write(IO, .{ .offset = 512, .length = 512 }, &bytes, true);
     const p = try builder.finish();

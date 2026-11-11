@@ -20,17 +20,6 @@ fn rangeWithin(r: model.Range, allowed: []const model.Range) bool {
     return false;
 }
 /// Pure portion of same-disk admission, also exercised without a host device.
-pub fn validateSessionAnchor(a: std.mem.Allocator, target: model.Target, bundle: @import("maintenance_session.zig").Bundle, proof: @import("esp_anchor.zig").Proof) !void {
-    try bundle.validate(a, target);
-    if (!std.mem.eql(u8, &target.identity, &proof.disk_identity)) return error.RecoveryBackingChanged;
-    if (!rangeWithin(proof.esp, bundle.protected)) return error.EspNotProtected;
-    if (!rangeWithin(bundle.control, proof.extents)) return error.SessionControlOutsideAnchor;
-    for ([_]@import("recovery_store.zig").CapsuleDescriptor{ bundle.bootstrap_store, bundle.cleanup_store }) |d| {
-        for (d.extents) |r| if (!rangeWithin(r, proof.extents)) return error.RecoveryCapsuleOutsideAnchor;
-    }
-    for (bundle.apply_store.extents) |r| if (r.overlaps(proof.esp)) return error.WorkStoreOverlapsEsp;
-}
-
 pub const Node = struct {
     major: u32,
     minor: u32,
@@ -208,7 +197,7 @@ pub fn checkMounts(mountinfo: []const u8, nodes: []const Node) !void {
         if (contains(nodes, node)) return error.BlockDeviceMounted;
     }
 }
-fn unused(a: std.mem.Allocator, io: std.Io, e: Evidence) !void {
+pub fn requireUnused(a: std.mem.Allocator, io: std.Io, e: Evidence) !void {
     var nodes: std.ArrayList(Node) = .empty;
     try nodes.append(a, e.node);
     // A whole-disk claim must account for every child partition. A partition
@@ -326,7 +315,7 @@ pub const BlockDevice = struct {
         const e = try inspect(allocator, io, try blockNode(fd));
         if (expected) |id| if (!std.mem.eql(u8, &id, &e.identity)) return error.DeviceIdentityChanged;
         if (sector) |size| if (size != e.logical) return error.DeviceGeometryChanged;
-        if (mode != .probe) try unused(allocator, io, e);
+        if (mode != .probe) try requireUnused(allocator, io, e);
         var result: BlockDevice = .{ .file = file, .arena = arena, .evidence = e, .target = .{ .identity = e.identity, .capacity = e.capacity, .sector_size = e.logical, .kind = .physical_device }, .mode = mode };
         try result.validateCore();
         return result;
@@ -345,81 +334,6 @@ pub const BlockDevice = struct {
         if (root.root_node.same(self.evidence.root_node) or std.mem.eql(u8, &root.disk_identity, &self.evidence.disk_identity)) return error.RecoveryMustUseIndependentDisk;
         self.recovery_directory = dir;
         self.recovery_fsid = try fs.filesystemIdentity(.{ .handle = dir.handle, .flags = .{ .nonblocking = false } });
-    }
-    /// A separate same-disk route, requiring an offline FAT32 allocation proof,
-    /// unchanged GPT ESP identity, complete program reservations, and a bounded
-    /// write allowlist. The caller authenticates the bundle/proof against the
-    /// firmware-bound session manifest before invoking this method.
-    pub fn admitSession(self: *BlockDevice, a: std.mem.Allocator, io: std.Io, bundle: @import("maintenance_session.zig").Bundle, path: []const @import("esp_anchor.zig").ShortName, proof: @import("esp_anchor.zig").Proof, initial: bool) !void {
-        if (self.mode != .write or self.evidence.partition or self.recovery_directory != null or self.session_digest != null) return error.InvalidSessionAdmission;
-        try unused(a, io, self.evidence);
-        if (bundle.bootstrap_store.block_size < self.evidence.physical) return error.RecoveryBlockTooSmall;
-        const reader = self.backend().reader();
-        const actual = try @import("esp_anchor.zig").revalidate(a, io, reader, path, bundle.bootstrap_store.block_size, proof, false);
-        if (initial) {
-            // A torn first session header changes reserved ESP bytes but cannot
-            // change any planned target byte. Require the complete initial read
-            // guards before allowing preparation to resume; prepare() also
-            // refuses any existing capsule header.
-            for (bundle.bootstrap.guards) |guard| {
-                if (!std.mem.eql(u8, &try reader.digest(io, guard.range), &guard.expected)) return error.PlanningReadChanged;
-            }
-            const table = try @import("partition_table.zig").BUILTIN.readLayout(a, io, reader);
-            if (table.kind != .gpt) return error.GptRequiredForSameDiskRecovery;
-            const esp_type = [_]u8{ 0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b };
-            const found = for (table.entries) |e| {
-                if (std.meta.eql(e.range, actual.esp) and std.mem.eql(u8, &e.type_id, &esp_type)) break true;
-            } else false;
-            if (!found) return error.EspPartitionChanged;
-        } else {
-            // GPT publication itself can have been interrupted. Recovery uses
-            // the authenticated initial ESP address plus unchanged FAT chain,
-            // and requires a valid durable session header before admission.
-            _ = try @import("maintenance_session.zig").Session.open(a, io, self.backend(), bundle);
-        }
-        try validateSessionAnchor(a, self.target, bundle, actual);
-        var writes: std.ArrayList(model.Range) = .empty;
-        const allocator = self.arena.allocator();
-        try writes.append(allocator, bundle.control);
-        for ([_]@import("recovery_store.zig").CapsuleDescriptor{ bundle.bootstrap_store, bundle.apply_store, bundle.cleanup_store }) |d| try writes.appendSlice(allocator, d.extents);
-        for ([_]@import("program.zig").Program{ bundle.bootstrap, bundle.apply, bundle.cleanup }) |p| {
-            for (p.steps, 0..) |_, i| if (p.targetRange(i)) |r| try writes.append(allocator, r);
-        }
-        self.session_writes = try writes.toOwnedSlice(allocator);
-        self.preparation_digest = null;
-        self.session_digest = bundle.digest();
-        self.session_esp = actual.esp;
-    }
-    /// The firmware-authenticated semantic request may publish ONLY its frozen
-    /// compiled-manifest file before full physical-program admission. This is
-    /// deliberately separate from transaction/capsule write authorization.
-    pub fn admitPreparationFile(self: *BlockDevice, a: std.mem.Allocator, io: std.Io, request: model.Digest, path: []const @import("esp_anchor.zig").ShortName, proof: @import("esp_anchor.zig").Proof, block: u32) !void {
-        if (self.mode != .write or self.evidence.partition or self.session_digest != null or self.preparation_digest != null or self.recovery_directory != null or block < self.evidence.physical or !std.mem.eql(u8, &proof.disk_identity, &self.target.identity)) return error.InvalidSessionAdmission;
-        try unused(a, io, self.evidence);
-        const actual = try @import("esp_anchor.zig").revalidate(a, io, self.backend().reader(), path, block, proof, false);
-        const table = try @import("partition_table.zig").BUILTIN.readLayout(a, io, self.backend().reader());
-        const esp_type = [_]u8{ 0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b };
-        const found = for (table.entries) |entry| {
-            if (std.meta.eql(entry.range, actual.esp) and std.mem.eql(u8, &entry.type_id, &esp_type)) break true;
-        } else false;
-        if (table.kind != .gpt or !found) return error.EspPartitionChanged;
-        self.session_writes = try self.arena.allocator().dupe(model.Range, actual.extents);
-        self.preparation_digest = request;
-    }
-    /// Add one immutable-allocation ESP file after authenticated session
-    /// admission. Never permit it to overlap transaction or recovery writes.
-    pub fn admitEspFile(self: *BlockDevice, a: std.mem.Allocator, io: std.Io, session: model.Digest, path: []const @import("esp_anchor.zig").ShortName, proof: @import("esp_anchor.zig").Proof, block: u32) !void {
-        const current = self.session_digest orelse return error.InvalidSessionAdmission;
-        if (self.mode != .write or !std.mem.eql(u8, &session, &current) or
-            !std.mem.eql(u8, &proof.disk_identity, &self.target.identity) or
-            !std.meta.eql(self.session_esp orelse return error.InvalidSessionAdmission, proof.esp) or block < self.evidence.physical) return error.InvalidSessionAdmission;
-        try unused(a, io, self.evidence);
-        const actual = try @import("esp_anchor.zig").revalidate(a, io, self.backend().reader(), path, block, proof, false);
-        for (actual.extents) |r| {
-            if (!rangeWithin(r, &.{proof.esp})) return error.RecoveryAnchorOutsideEsp;
-            for (self.session_writes) |other| if (r.overlaps(other)) return error.EspFileOverlapsSession;
-        }
-        self.session_writes = try std.mem.concat(self.arena.allocator(), model.Range, &.{ self.session_writes, actual.extents });
     }
     pub fn refreshLayout(self: *BlockDevice) !void {
         if (self.evidence.partition) return;
