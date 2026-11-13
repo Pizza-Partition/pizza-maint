@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import tempfile
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -23,6 +24,21 @@ class SourceFetchTests(unittest.TestCase):
                 fetch.fetch_archive('zig', Path(root), 'fatfs', 'https://example.invalid/ff.zip', 'expected-package')
             self.assertEqual(run.call_count, 1)
             self.assertEqual(run.call_args.args[0][0], 'curl')
+
+    def test_download_failure_falls_back_to_zig_and_verifies_identity(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(fetch.subprocess, 'run', side_effect=subprocess.CalledProcessError(22, 'curl')), patch.object(fetch.subprocess, 'check_output', return_value='expected-package\n') as get:
+            fetch.fetch_archive('zig', Path(root), 'ntfs3g', 'https://example.invalid/source.tgz', 'expected-package')
+            self.assertEqual(get.call_args.args[0], ['zig', 'fetch', 'https://example.invalid/source.tgz'])
+
+    def test_fallback_identity_mismatch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(fetch.subprocess, 'run', side_effect=subprocess.CalledProcessError(22, 'curl')), patch.object(fetch.subprocess, 'check_output', return_value='different-package\n'):
+            with self.assertRaisesRegex(ValueError, 'locked hash'):
+                fetch.fetch_archive('zig', Path(root), 'ntfs3g', 'https://example.invalid/source.tgz', 'expected-package')
+
+    def test_failure_of_both_transports_is_reported(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(fetch.subprocess, 'run', side_effect=subprocess.CalledProcessError(22, 'curl')), patch.object(fetch.subprocess, 'check_output', side_effect=subprocess.CalledProcessError(1, 'zig')):
+            with self.assertRaises(subprocess.CalledProcessError):
+                fetch.fetch_archive('zig', Path(root), 'ntfs3g', 'https://example.invalid/source.tgz', 'expected-package')
 
 
 if __name__ == '__main__':

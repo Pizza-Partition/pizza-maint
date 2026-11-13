@@ -19,8 +19,15 @@ def archives(lock):
 def fetch_archive(zig, directory, name, url, expected):
     extension = '.zip' if url.endswith('.zip') else '.tar.xz' if url.endswith('.tar.xz') else '.tar.gz'
     archive = directory / (name + extension)
-    subprocess.run(['curl', '--fail', '--location', '--silent', '--show-error', '--retry', '3', '--retry-all-errors', '--connect-timeout', '20', '--max-time', '180', '--output', str(archive), url], check=True)
-    actual = subprocess.check_output([zig, 'fetch', str(archive)], text=True).strip()
+    try:
+        subprocess.run(['curl', '--fail', '--location', '--silent', '--show-error', '--retry', '3', '--retry-all-errors', '--connect-timeout', '20', '--max-time', '180', '--output', str(archive), url], check=True)
+        source = str(archive)
+    except subprocess.CalledProcessError:
+        # Some upstreams reject curl while accepting Zig's native client.
+        # Both transports must produce the exact same locked package identity.
+        print(f'{name}: curl transport failed; trying the Zig HTTPS client', flush=True)
+        source = url
+    actual = subprocess.check_output([zig, 'fetch', source], text=True).strip()
     if actual != expected:
         raise ValueError(f'{name}: source package differs from the locked hash')
 
