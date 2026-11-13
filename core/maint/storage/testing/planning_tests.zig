@@ -168,3 +168,36 @@ test "record relocation views preserve original provenance across overlapping ma
     try std.testing.expect(std.mem.allEqual(u8, changes.writes[0].content[13..], 0x52));
     try std.testing.expectEqual(0, disk.writes);
 }
+
+test "placement matches sector occupancy across overlapping exclusions and changing bounds" {
+    const sector = 512;
+    var space = try storage.space.Space.init(std.testing.allocator, .{ .offset = 0, .length = 64 * sector });
+    defer space.deinit();
+    var used: [64]bool = @splat(false);
+    for ([_][2]usize{ .{ 30, 8 }, .{ 2, 3 }, .{ 34, 8 }, .{ 1, 1 }, .{ 16, 2 } }) |r| {
+        try space.exclude(.{ .offset = r[0] * sector, .length = r[1] * sector });
+        @memset(used[r[0]..][0..r[1]], true);
+    }
+    for (0..160) |i| {
+        const start = i % 7;
+        const limit = 64 - i % 5;
+        const cells = 1 + i % 3;
+        const alignment: u32 = @as(u32, sector) << @intCast(i % 3);
+        const origin: u64 = if (i % 2 == 0) 0 else sector;
+        space.bounds = .{ .offset = start * sector + sector, .length = (limit - start - 1) * sector };
+        var expected: ?usize = null;
+        outer: for (start + 1..limit) |at| {
+            if (at + cells > limit) break;
+            if ((at * sector - origin) % alignment != 0) continue;
+            for (used[at..][0..cells]) |occupied| if (occupied) continue :outer;
+            expected = at;
+            break;
+        }
+        if (expected) |at| {
+            const result = try space.allocateRelative(cells * sector, alignment, origin);
+            try std.testing.expectEqual(at * sector, result.offset);
+            try std.testing.expectEqual(cells * sector, result.length);
+            @memset(used[at..][0..cells], true);
+        } else try std.testing.expectError(error.NoPlacementSpace, space.allocateRelative(cells * sector, alignment, origin));
+    }
+}

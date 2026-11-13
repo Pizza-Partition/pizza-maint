@@ -9,6 +9,7 @@ pub const Options = struct {
     output: []const u8,
     kernel_version: ?[]const u8 = null,
     dry_run: bool = false,
+    runtime_policy: bundle_build.release.RuntimePolicy = .attested_release,
 };
 
 /// Authenticate the prebuilt base and append Pizza's application layer.
@@ -31,11 +32,12 @@ pub fn build(
     const release = kernel.object.get("release") orelse return error.MissingField;
     if (release != .string or !std.mem.eql(u8, release.string, "7.2.11-arch1-1")) return error.KernelModulesVersionMismatch;
     if (options.kernel_version) |selected| if (!std.mem.eql(u8, selected, release.string)) return error.KernelModulesVersionMismatch;
-    const command = try allocator.dupe([]const u8, &.{
-        "pizza-tools", "image", "--bundle", root, "--output", output,
-    });
+    const command = try allocator.dupe([]const u8, if (options.runtime_policy == .local_candidate)
+        &.{ "pizza-tools", "image", "--candidate-runtime", "--bundle", root, "--output", output }
+    else
+        &.{ "pizza-tools", "image", "--bundle", root, "--output", output });
     if (options.dry_run) return command;
-    try bundle_build.image(allocator, io, environ, root, output);
+    try bundle_build.image(allocator, io, environ, root, output, options.runtime_policy);
     const image = try std.Io.Dir.cwd().openFile(io, output, .{ .mode = .read_write });
     defer image.close(io);
     // Preserve the existing unprivileged /dev/console archive helper.

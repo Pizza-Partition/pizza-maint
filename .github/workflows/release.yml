@@ -8,67 +8,51 @@ permissions:
 jobs:
   tests:
     uses: ./.github/workflows/ci.yml
-  release:
+  runtime:
     needs: tests
     runs-on: ubuntu-26.04
-    timeout-minutes: 120
-    permissions:
-      contents: write
-      id-token: write
-      attestations: write
+    outputs:
+      bundle: ${{ steps.locked.outputs.bundle }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
-      - name: Install locked Zig 0.17.0
+      - run: node tools/install-zig.mjs
+      - name: Fetch and authenticate the published runtime
+        id: locked
         run: |
-          node --input-type=module <<'JS'
-          import fs from 'node:fs';
-          import path from 'node:path';
-          import { createHash } from 'node:crypto';
-          import { execFileSync } from 'node:child_process';
-          const lock = JSON.parse(fs.readFileSync('config/toolchain.json', 'utf8'));
-          const source = lock['x86_64-linux'];
-          const response = await fetch(source.url);
-          if (!response.ok) throw new Error(`Zig download: ${response.status}`);
-          const bytes = Buffer.from(await response.arrayBuffer());
-          if (createHash('sha256').update(bytes).digest('hex') !== source.sha256)
-            throw new Error('Zig archive SHA-256 mismatch');
-          const directory = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP, 'pizza-zig-'));
-          const archive = path.join(directory, 'zig.tar.xz');
-          fs.writeFileSync(archive, bytes);
-          execFileSync('tar', ['-xJf', archive, '-C', directory]);
-          const installed = path.join(directory, `zig-x86_64-linux-${lock.version}`);
-          if (execFileSync(path.join(installed, 'zig'), ['version'], { encoding: 'utf8' }).trim() !== lock.version)
-            throw new Error('Zig version mismatch');
-          fs.appendFileSync(process.env.GITHUB_PATH, `${installed}\n`);
-          JS
-      - name: Install image and VM tools
-        run: sudo apt-get update && sudo apt-get install -y binutils libarchive-tools systemd-ukify systemd-boot-efi qemu-system-x86
-      - name: Fetch pinned EFI stub
-        run: python3 scripts/fetch-efi-stub.py "$RUNNER_TEMP/linuxx64.efi.stub"
-      - name: Build verified maintenance image and protocol
-        run: zig build bundle image uki protocol-package -Duki-stub="$RUNNER_TEMP/linuxx64.efi.stub" -Doptimize=safe -j4 --summary all
-      - name: Boot the production maintenance application
-        run: |
-          zig build test-maintenance -Doptimize=safe -j4 -- --bundle zig-out/runtime/bundle --kernel-version 7.2.11-arch1-1 --timeout 180
-          zig build test-maintenance -Doptimize=safe -j4 -- --backend --bundle zig-out/runtime/bundle --kernel-version 7.2.11-arch1-1 --timeout 180
-      - name: Package immutable maintenance dependency
-        run: |
-          mkdir -p dist
-          cp config/bundle/release.json zig-out/share/pizza/release.json
-          tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -czf dist/pizza-maint-x86_64.tar.gz -C zig-out/share/pizza maint.efi maint.efi.pizza.json maint.img maint.img.pizza.json vmlinuz protocol release.json
-          cp zig-out/share/pizza/pizza-protocol-4.0.1.tar.gz dist/
-          cd dist
-          sha256sum *.tar.gz > SHA256SUMS
+          set -euo pipefail
+          zig build runtime-deps -Doptimize=safe -j4
+          cp config/bundle/release.json zig-out/runtime/dependencies/release.json
+          (cd zig-out/runtime/dependencies && sha256sum pizza-base-x86_64.img vmlinuz base.json > SHA256SUMS)
+          python3 -c 'import json; print("bundle=" + json.load(open("config/bundle/release.json"))["commit"])' >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pizza-maint-x86_64
-          path: dist/
+          name: verified-runtime
+          path: zig-out/runtime/dependencies/
           if-no-files-found: error
+  candidate:
+    needs: runtime
+    uses: Pizza-Partition/Pizza/.github/workflows/candidate.yml@main
+    with:
+      maintenance-ref: ${{ github.sha }}
+      bundle-ref: ${{ needs.runtime.outputs.bundle }}
+      runtime-artifact: verified-runtime
+  release:
+    needs: candidate
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: candidate-maintenance-release
+          path: dist/
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         if: startsWith(github.ref, 'refs/tags/v')
         id: attest
@@ -77,6 +61,7 @@ jobs:
       - name: Publish tested release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
+          GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           ATTESTATION: ${{ steps.attest.outputs.bundle-path }}
         run: |

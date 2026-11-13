@@ -43,15 +43,11 @@ pub fn compileOffline(a: std.mem.Allocator, io: std.Io, reader: storage.device.R
             if (p.partition_uuid) |uuid| if (!std.mem.eql(u8, &e.uuid, &try hex16(uuid))) return error.PartitionIdentityChanged;
             if (p.type_guid) |guid| if (!std.mem.eql(u8, &e.type_id, &try hex16(guid))) return error.PartitionMetadataChangeUnimplemented;
             if (try proto.byteCount(p.attributes) != e.attributes) return error.PartitionMetadataChangeUnimplemented;
-        } else {
-            const name = try std.unicode.utf8ToUtf16LeAlloc(a, p.name);
-            if (name.len > 36) return error.PartitionNameTooLong;
-            for (name, 0..) |ch, i| std.mem.writeInt(u16, entry.name_utf16[i * 2 ..][0..2], ch, .little);
         }
         if (!p.retain_data) {
             const filesystem = p.filesystem orelse return error.MissingFilesystemSelection;
             const driver = try storage.filesystem.BUILTIN.get(@fromBackingInt(@intCast(@backingInt(filesystem))));
-            try formats.append(a, .{ .partition_id = id, .driver = driver, .label = if (filesystem == .ntfs) p.name else "" });
+            try formats.append(a, .{ .partition_id = id, .driver = driver, .label = p.name });
         }
         try entries.append(a, entry);
     }

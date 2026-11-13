@@ -66,6 +66,20 @@ pub const Base = struct {
     }
 };
 
+/// Local candidate bytes are built in the calling CI run, before publication.
+/// This policy is explicit; normal release downloads always require Sigstore/TUF.
+pub const RuntimePolicy = enum { attested_release, local_candidate };
+pub fn verifySource(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, root: []const u8, lock: Lock, policy: RuntimePolicy) !Base {
+    if (policy == .attested_release) return verify(a, io, env, root, lock);
+    try lock.validate();
+    try verifyDigest(a, io, try std.fs.path.join(a, &.{ root, lock.asset }), lock.sha256);
+    try verifyDigest(a, io, try std.fs.path.join(a, &.{ root, lock.kernel_asset }), lock.kernel_sha256);
+    try verifyDigest(a, io, try std.fs.path.join(a, &.{ root, lock.metadata_asset }), lock.metadata_sha256);
+    const base = try std.json.parseFromSliceLeaky(Base, a, try std.Io.Dir.cwd().readFileAlloc(io, try std.fs.path.join(a, &.{ root, lock.metadata_asset }), a, .limited(1024 * 1024)), .{ .ignore_unknown_fields = true });
+    try base.validate();
+    return base;
+}
+
 pub fn verify(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, root: []const u8, lock: Lock) !Base {
     return verifyWithTrust(a, io, env, root, lock, .{});
 }

@@ -350,3 +350,24 @@ test "base profile rejects incompatible runtime before application assembly" {
     base.profile = "obsolete";
     try std.testing.expectError(error.IncompatibleBaseImage, base.validate());
 }
+
+test "local candidate content is verified before layering and still rejects tampering" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+    const root = try utils.filesystem.createTemporaryDirectory(a, io, "pizza-candidate-");
+    defer std.Io.Dir.cwd().deleteTree(io, root) catch {};
+    var lock = try release.readLock(a, io, release.LOCK_PATH);
+    const base: release.Base = .{ .format = 1, .kind = "pizza-base", .architecture = "x86_64", .profile = "cpu-maint-v1", .kernel_version = "7.2.11", .kernel_release = "7.2.11-arch1-1", .initramfs = "pizza-base-x86_64.img", .kernel = "vmlinuz", .application_overlay = .{ .init = "/init", .runtime_root = "/opt/pizza/bundle" } };
+    for ([_][2][]const u8{ .{ lock.asset, "base" }, .{ lock.kernel_asset, "kernel" }, .{ lock.metadata_asset, try std.json.Stringify.valueAlloc(a, base, .{}) } }) |file|
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ root, file[0] }), .data = file[1] });
+    lock.sha256 = try utils.filesystem.hashFileSha256(a, io, try std.fs.path.join(a, &.{ root, lock.asset }));
+    lock.kernel_sha256 = try utils.filesystem.hashFileSha256(a, io, try std.fs.path.join(a, &.{ root, lock.kernel_asset }));
+    lock.metadata_sha256 = try utils.filesystem.hashFileSha256(a, io, try std.fs.path.join(a, &.{ root, lock.metadata_asset }));
+    var env: std.process.Environ.Map = .init(a);
+    const verified = try release.verifySource(a, io, &env, root, lock, .local_candidate);
+    try std.testing.expectEqualStrings(base.kernel_release, verified.kernel_release);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ root, lock.kernel_asset }), .data = "tampered kernel" });
+    try std.testing.expectError(error.ReleaseDigestMismatch, release.verifySource(a, io, &env, root, lock, .local_candidate));
+}

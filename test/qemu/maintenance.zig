@@ -10,6 +10,7 @@ const PARAMS = clap.parseParamsComptime(
     \\--backend  Boot the business backend test instead of supervisor diagnostics.
     \\--storage  Verify native primitives on disposable private images; no filesystem adapters.
     \\--storage-binary <str>  Standalone static self-test (default: zig-out/bin/pizza-storage-test).
+    \\--candidate-runtime  Boot locally built CI candidate runtime bytes.
     \\--bundle <str>  Prepared full bundle (default: zig-out/runtime/bundle).
     \\--kernel-version <str>  Bundled kernel release (required).
     \\--kernel <str>  Kernel path (default: BUNDLE/vmlinuz).
@@ -41,6 +42,7 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, environ: *std.process.Envir
         .bundle = root,
         .output = image,
         .kernel_version = version,
+        .runtime_policy = if (parsed.args.@"candidate-runtime" != 0) .local_candidate else .attested_release,
     });
     if (parsed.args.storage != 0) {
         const binary = try utils.filesystem.resolveOutputPath(allocator, io, checkout_root, parsed.args.@"storage-binary" orelse "zig-out/bin/pizza-storage-test");

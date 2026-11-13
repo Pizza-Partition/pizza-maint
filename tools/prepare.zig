@@ -6,6 +6,7 @@ const bundle_build = @import("bundle_build");
 const PARAMS = clap.parseParamsComptime(
     \\-h, --help  Display this help and exit.
     \\--runtime <str>  Verified release download directory (required).
+    \\--candidate-runtime  Use locally built CI candidate bytes; requires a content lock in the runtime directory.
     \\--init <str>  Static pizza-init PID 1 binary (required).
     \\--maintenance <str>  Maintenance binary linked for the bundle (required).
     \\--destination <str>  New bundle directory (required).
@@ -42,5 +43,5 @@ pub fn run(
     const init_binary = parsed.args.init orelse return error.MissingInitBinary;
     const maintenance = parsed.args.maintenance orelse return error.MissingMaintenanceBinary;
     const destination = parsed.args.destination orelse return error.MissingDestination;
-    try bundle_build.assemble(allocator, io, environ, .{ .runtime = runtime, .init = init_binary, .maintenance = maintenance, .destination = destination });
+    try bundle_build.assemble(allocator, io, environ, .{ .runtime = runtime, .init = init_binary, .maintenance = maintenance, .destination = destination, .lock = if (parsed.args.@"candidate-runtime" != 0) try std.fs.path.join(allocator, &.{ runtime, "release.json" }) else bundle_build.release.LOCK_PATH, .policy = if (parsed.args.@"candidate-runtime" != 0) .local_candidate else .attested_release });
 }

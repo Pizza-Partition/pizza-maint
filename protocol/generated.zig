@@ -195,7 +195,7 @@ pub const ExecutionSession = struct {
 };
 pub const PrivilegedRequest = struct {
     version: u16,
-    action: enum { inventory, validate, execute, status, cancel, prepare, reboot, complete },
+    action: enum { inventory, validate, execute, status, cancel, prepare, reboot, complete, discover },
     draft: ?PlanDraft = null,
     approved_digest: ?[]const u8 = null,
     session_id: ?[]const u8 = null,
@@ -210,4 +210,9 @@ pub const CompletionReceipt = struct {
     image_digest: []const u8,
     outcome: enum { completed, rolled_back, setup_failed },
     message: []const u8,
+};
+pub const SessionDiscovery = struct {
+    version: u16,
+    maintenance: ?MaintenanceSession = null,
+    execution: ?ExecutionSession = null,
 };

@@ -17,3 +17,15 @@ maintenance endpoint's strict admission policy. Payload size limits remain expli
 arguments to FirmwarePin. These source API additions do not change wire v4 or any
 on-disk field name. Full host scheduling and offline feasibility validation remain
 in their respective applications.
+
+Pure plan admission, GUID/partition identity and the plan validation corpus also
+live in this package. Host filesystem probes and scheduling, and maintenance
+feasibility/preflight, remain application policies. Both consumers run the shared
+corpus; maintenance CI explicitly includes the protocol test root.
+
+Pizza keeps a content-locked snapshot in `vendor/pizza-protocol`, so ordinary
+builds need no adjacent checkout. After changing this package, regenerate bindings
+and run `node tools/sync-shared.mjs --source ../pizza-maint` from Pizza. Its CI
+checks every shared file hash; cross-repository candidate acceptance additionally
+compares the snapshot with the exact maintenance source being built. The same
+update command synchronizes the canonical Zig installer and its regression tests.

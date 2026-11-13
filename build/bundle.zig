@@ -7,13 +7,17 @@ pub fn add(b: *std.Build, tool: *std.Build.Step.Compile, init_binary: *std.Build
     fetch.setCwd(b.path("."));
     fetch.addFileArg(b.path("config/bundle/release.json"));
     fetch.addArg("--destination");
-    const runtime = fetch.addOutputDirectoryArg2("runtime", .{});
+    const downloaded_runtime = fetch.addOutputDirectoryArg2("runtime", .{});
+    const candidate = b.option([]const u8, "candidate-runtime", "Explicit local CI runtime candidate directory (not a downloaded release)");
+    const runtime: std.Build.LazyPath = if (candidate) |path| .{ .cwd_relative = path } else downloaded_runtime;
     const runtime_step = b.step("runtime-deps", "Download and verify the pinned pizza-bundle release");
     runtime_step.dependOn(&fetch.step);
+    runtime_step.dependOn(&b.addInstallDirectory(.{ .source_dir = downloaded_runtime, .install_dir = .prefix, .install_subdir = "runtime/dependencies" }).step);
     const prepare = b.addRunArtifact(tool);
     prepare.setCwd(b.path("."));
     prepare.addArgs(&.{ "prepare-bundle", "--runtime" });
     prepare.addDirectoryArg2(runtime, .{});
+    if (candidate != null) prepare.addArg("--candidate-runtime");
     prepare.addArg("--init");
     prepare.addArtifactArg(init_binary);
     prepare.addArg("--maintenance");
@@ -45,6 +49,7 @@ pub fn add(b: *std.Build, tool: *std.Build.Step.Compile, init_binary: *std.Build
     image.setCwd(b.path("."));
     image.addArgs(&.{ "image", "--bundle" });
     image.addDirectoryArg2(directory, .{});
+    if (candidate != null) image.addArg("--candidate-runtime");
     image.addArg("--output");
     const image_file = image.addOutputFileArg2("maint.img", .{});
     const image_step = b.step("image", "Append Pizza to the attested base initramfs");
@@ -55,6 +60,7 @@ pub fn add(b: *std.Build, tool: *std.Build.Step.Compile, init_binary: *std.Build
     uki.setCwd(b.path("."));
     uki.addArgs(&.{ "image", "--bundle" });
     uki.addDirectoryArg2(directory, .{});
+    if (candidate != null) uki.addArg("--candidate-runtime");
     uki.addArg("--output");
     _ = uki.addOutputFileArg2("maint.img", .{});
     uki.addArg("--uki-output");

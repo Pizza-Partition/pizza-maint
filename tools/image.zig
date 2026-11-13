@@ -10,6 +10,7 @@ const PARAMS = clap.parseParamsComptime(
     \\--uki-output <str>  Also assemble a block-aligned x86-64 UKI.
     \\--ukify <str>  systemd ukify executable (default: ukify).
     \\--stub <str>  Explicit x86-64 systemd EFI stub.
+    \\--candidate-runtime  Verify local CI candidate content instead of publisher signatures.
     \\--dry-run  Print the layer assembly command without creating the image.
 );
 
@@ -41,6 +42,7 @@ pub fn run(
         .output = parsed.args.output orelse return error.MissingOutput,
         .kernel_version = parsed.args.@"kernel-version",
         .dry_run = parsed.args.@"dry-run" != 0,
+        .runtime_policy = if (parsed.args.@"candidate-runtime" != 0) .local_candidate else .attested_release,
     });
     if (parsed.args.@"uki-output") |output| {
         if (parsed.args.@"dry-run" == 0) try buildUki(allocator, io, environ, parsed.args.bundle.?, parsed.args.output.?, output, parsed.args.ukify orelse "ukify", parsed.args.stub orelse "/usr/lib/systemd/boot/efi/linuxx64.efi.stub");

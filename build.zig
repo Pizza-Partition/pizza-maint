@@ -217,13 +217,13 @@ pub fn build(b: *std.Build) void {
     compile_policy.configure(protocol_export);
     const export_package = b.addRunArtifact(protocol_export);
     const protocol_directory = export_package.addOutputDirectoryArg("protocol");
-    const protocol_archive = export_package.addOutputFileArg("pizza-protocol-4.0.1.tar.gz");
+    const protocol_archive = export_package.addOutputFileArg("pizza-protocol-4.0.2.tar.gz");
     // Track the actual inputs, excluding nested developer build caches.
-    for ([_][]const u8{ "build.zig", "build.zig.zon", "README.md", "root.zig", "contract.json", "generated.zig", "generated/contract.js", "generated/contract.d.ts", "uefi.zig", "firmware_pin.zig", "receipt_envelope.zig", "inventory_fingerprint.zig", "intent_normalization.zig" }) |name|
+    for ([_][]const u8{ "build.zig", "build.zig.zon", "README.md", "root.zig", "contract.json", "generated.zig", "generated/contract.js", "generated/contract.d.ts", "uefi.zig", "firmware_pin.zig", "receipt_envelope.zig", "inventory_fingerprint.zig", "intent_normalization.zig", "plan_validation.zig", "plan_validation_cases.zig" }) |name|
         export_package.addFileArg(b.path(b.fmt("protocol/{s}", .{name})));
     export_package.step.dependOn(&check.step);
     const install_protocol = b.addInstallDirectory(.{ .source_dir = protocol_directory, .install_dir = .prefix, .install_subdir = "share/pizza/protocol" });
-    const install_protocol_archive = b.addInstallFile(protocol_archive, "share/pizza/pizza-protocol-4.0.1.tar.gz");
+    const install_protocol_archive = b.addInstallFile(protocol_archive, "share/pizza/pizza-protocol-4.0.2.tar.gz");
     const protocol_step = b.step("protocol-package", "Export the independent v4 protocol package and fetchable archive");
     protocol_step.dependOn(&install_protocol.step);
     protocol_step.dependOn(&install_protocol_archive.step);
@@ -512,9 +512,17 @@ pub fn build(b: *std.Build) void {
         "test",
         "Run Zig module/integration tests and frontend tests",
     );
+    const unit_step = b.step("test-unit", "Run all module tests, including bundle authentication, without VM integration");
+    const protocol_tests = b.addTest(.{ .name = "protocol-tests", .root_module = proto });
+    compile_policy.configure(protocol_tests);
+    const run_protocol_tests = b.addRunArtifact(protocol_tests);
+    unit_step.dependOn(&run_protocol_tests.step);
+    test_step.dependOn(&run_protocol_tests.step);
+    b.step("test-protocol", "Run shared protocol and plan admission corpus tests").dependOn(&run_protocol_tests.step);
     test_step.dependOn(&executor_guest.step);
     const run_core_tests = b.addRunArtifact(tests);
     test_step.dependOn(&run_core_tests.step);
+    unit_step.dependOn(&run_core_tests.step);
     b.step("test-core", "Run core subsystem unit tests independently of integration harnesses").dependOn(&run_core_tests.step);
     const maintenance_test_module = b.createModule(.{
         .root_source_file = b.path("core/maint/tests.zig"),
@@ -529,6 +537,7 @@ pub fn build(b: *std.Build) void {
     compile_policy.configure(maintenance_tests);
     const run_maintenance_tests = b.addRunArtifact(maintenance_tests);
     test_step.dependOn(&run_maintenance_tests.step);
+    unit_step.dependOn(&run_maintenance_tests.step);
     b.step("test-maint-executor", "Verify device acquisition, execution, cancellation and recovery").dependOn(&run_maintenance_tests.step);
     // Dependency-module tests are not a storage acceptance gate on their own.
     // Give storage tests their own root so test-storage also runs hazards,
@@ -613,9 +622,11 @@ pub fn build(b: *std.Build) void {
     const run_matrix_tests = b.addRunArtifact(hardware_supervisor_tests);
     b.step("test-hardware-supervisor", "Verify physical test supervision without accessing a disk").dependOn(&run_matrix_tests.step);
     test_step.dependOn(&run_matrix_tests.step);
+    unit_step.dependOn(&run_matrix_tests.step);
     const run_storage_tests = b.addRunArtifact(storage_tests);
     b.step("test-storage-unit", "Verify storage planning and crash recovery without building the UI").dependOn(&run_storage_tests.step);
     test_step.dependOn(&run_storage_tests.step);
+    unit_step.dependOn(&run_storage_tests.step);
     run_storage.step.dependOn(&run_storage_tests.step);
     const filesystem_test_filter = b.option([]const u8, "filesystem-test-filter", "Run filesystem tests matching this name");
     const filesystem_tests = b.addTest(.{ .filters = if (filesystem_test_filter) |filter| &.{filter} else &.{}, .root_module = b.createModule(.{
@@ -641,22 +652,28 @@ pub fn build(b: *std.Build) void {
     b.step("test-storage-crash", "Random SIGKILL during registered filesystem writes and recovery").dependOn(&run_crash.step);
     const utils_tests = b.addTest(.{ .root_module = utils });
     compile_policy.configure(utils_tests);
-    test_step.dependOn(&b.addRunArtifact(utils_tests).step);
+    const run_utils_unit = b.addRunArtifact(utils_tests);
+    test_step.dependOn(&run_utils_unit.step);
+    unit_step.dependOn(&run_utils_unit.step);
     const bundle_tests = b.addTest(.{ .root_module = bundle });
     compile_policy.configure(bundle_tests);
     const run_bundle_tests = b.addRunArtifact(bundle_tests);
     run_bundle_tests.setCwd(b.path("."));
     run_bundle_tests.step.dependOn(b.getInstallStep());
     test_step.dependOn(&run_bundle_tests.step);
+    unit_step.dependOn(&run_bundle_tests.step);
     const bundle_build_tests = b.addTest(.{ .root_module = bundle_build });
     compile_policy.configure(bundle_build_tests);
     const run_bundle_build_tests = b.addRunArtifact(bundle_build_tests);
     run_bundle_build_tests.setCwd(b.path("."));
     run_bundle_build_tests.step.dependOn(b.getInstallStep());
     test_step.dependOn(&run_bundle_build_tests.step);
+    unit_step.dependOn(&run_bundle_build_tests.step);
     const archive_tests = b.addTest(.{ .root_module = initramfs });
     compile_policy.configure(archive_tests);
-    test_step.dependOn(&b.addRunArtifact(archive_tests).step);
+    const run_archive_unit = b.addRunArtifact(archive_tests);
+    test_step.dependOn(&run_archive_unit.step);
+    unit_step.dependOn(&run_archive_unit.step);
     for ([_][]const u8{
         "test/qemu/harness.zig",
         "core/init/memory.zig",
@@ -676,11 +693,15 @@ pub fn build(b: *std.Build) void {
             }),
         });
         compile_policy.configure(module_tests);
-        test_step.dependOn(&b.addRunArtifact(module_tests).step);
+        const run_module_tests = b.addRunArtifact(module_tests);
+        test_step.dependOn(&run_module_tests.step);
+        unit_step.dependOn(&run_module_tests.step);
     }
     const matrix_tests = b.addTest(.{ .root_module = matrix });
     compile_policy.configure(matrix_tests);
-    test_step.dependOn(&b.addRunArtifact(matrix_tests).step);
+    const run_matrix_unit = b.addRunArtifact(matrix_tests);
+    test_step.dependOn(&run_matrix_unit.step);
+    unit_step.dependOn(&run_matrix_unit.step);
     const test_binaries = b.addOptions();
     const report_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("test/integration/journal.zig"), .target = host_target, .optimize = .debug, .imports = &.{ .{ .name = "utils", .module = utils }, .{ .name = "journal", .module = journal } } }) });
     const report_options = b.addOptions();

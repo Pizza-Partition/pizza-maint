@@ -9,17 +9,20 @@ pub const Options = struct {
     maintenance: []const u8,
     destination: []const u8,
     lock: []const u8 = release.LOCK_PATH,
+    policy: release.RuntimePolicy = .attested_release,
 };
 
 pub fn assemble(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, options: Options) !void {
     const lock = try release.readLock(a, io, options.lock);
     try application_contract.verify(a, io, options.maintenance);
-    const base = try release.verify(a, io, env, options.runtime, lock);
+    const base = try release.verifySource(a, io, env, options.runtime, lock, options.policy);
     const output = try files.Output.init(a, io, options.destination, true);
     defer output.deinit(io);
     const root = output.temporary;
-    for ([_][]const u8{ lock.asset, lock.kernel_asset, lock.metadata_asset, "attestation.json" }) |name|
+    for ([_][]const u8{ lock.asset, lock.kernel_asset, lock.metadata_asset }) |name|
         try std.Io.Dir.cwd().copyFile(try std.fs.path.join(a, &.{ options.runtime, name }), .cwd(), try std.fs.path.join(a, &.{ root, name }), io, .{});
+    if (options.policy == .attested_release)
+        try std.Io.Dir.cwd().copyFile(try std.fs.path.join(a, &.{ options.runtime, "attestation.json" }), .cwd(), try std.fs.path.join(a, &.{ root, "attestation.json" }), io, .{});
     try std.Io.Dir.cwd().copyFile(options.lock, .cwd(), try std.fs.path.join(a, &.{ root, "release.json" }), io, .{});
     const overlay = try std.fs.path.join(a, &.{ root, "overlay" });
     const application = try std.fs.path.join(a, &.{ overlay, "opt/pizza/bundle/bin/pizza-maint" });
@@ -35,7 +38,7 @@ pub fn assemble(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map,
         .layout = "base-plus-overlay",
         .kernel = .{ .version = base.kernel_version, .release = base.kernel_release, .image = "vmlinuz" },
         .components = .{ .@"pizza-init" = "overlay/init", .@"pizza-maint" = "overlay/opt/pizza/bundle/bin/pizza-maint" },
-        .provenance = .{ .repository = release.REPOSITORY, .tag = lock.tag, .commit = lock.commit, .sha256 = lock.sha256 },
+        .provenance = .{ .policy = options.policy, .repository = release.REPOSITORY, .tag = lock.tag, .commit = lock.commit, .sha256 = lock.sha256 },
     }, .{ .whitespace = .indent_2 })}) });
     try std.Io.Dir.cwd().renamePreserve(root, .cwd(), output.target, io);
 }

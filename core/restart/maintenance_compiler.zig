@@ -105,7 +105,7 @@ pub fn compile(a: std.mem.Allocator, io: std.Io, reader: storage.device.Reader, 
     var formats: std.ArrayList(storage.service.Format) = .empty;
     for (draft.layout) |p| if (!p.retain_data) {
         const fs = p.filesystem orelse return error.MissingFilesystemSelection;
-        try formats.append(a, .{ .partition_id = try proto.hexDigest(p.id), .driver = try storage.filesystem.BUILTIN.get(@fromBackingInt(@intCast(@backingInt(fs)))), .label = if (fs == .ntfs) p.name else "" });
+        try formats.append(a, .{ .partition_id = try proto.hexDigest(p.id), .driver = try storage.filesystem.BUILTIN.get(@fromBackingInt(@intCast(@backingInt(fs)))), .label = p.name });
     };
     var apply = try storage.service.layoutWithFormats(a, io, boot_preview.reader(), apply_layout, formats.items);
     var apply_preview = try storage.program.Preview.init(boot_preview.reader(), apply.program);

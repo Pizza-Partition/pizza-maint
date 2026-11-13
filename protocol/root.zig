@@ -231,3 +231,10 @@ test {
     std.testing.refAllDecls(intent_normalization);
     std.testing.refAllDecls(receipt_envelope);
 }
+
+pub const plan_validation_cases = @import("plan_validation_cases.zig");
+pub const plan_validation = @import("plan_validation.zig").For(@This());
+
+test "shared plan admission corpus" {
+    try @import("plan_validation_cases.zig").run(@This());
+}

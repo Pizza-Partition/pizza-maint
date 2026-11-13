@@ -15,28 +15,9 @@ jobs:
         with:
           node-version: '22'
       - name: Install locked Zig 0.17.0
-        run: |
-          node --input-type=module <<'JS'
-          import fs from 'node:fs';
-          import path from 'node:path';
-          import { createHash } from 'node:crypto';
-          import { execFileSync } from 'node:child_process';
-          const lock = JSON.parse(fs.readFileSync('config/toolchain.json', 'utf8'));
-          const source = lock['x86_64-linux'];
-          const response = await fetch(source.url);
-          if (!response.ok) throw new Error(`Zig download: ${response.status}`);
-          const bytes = Buffer.from(await response.arrayBuffer());
-          if (createHash('sha256').update(bytes).digest('hex') !== source.sha256)
-            throw new Error('Zig archive SHA-256 mismatch');
-          const directory = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP, 'pizza-zig-'));
-          const archive = path.join(directory, 'zig.tar.xz');
-          fs.writeFileSync(archive, bytes);
-          execFileSync('tar', ['-xJf', archive, '-C', directory]);
-          const installed = path.join(directory, `zig-x86_64-linux-${lock.version}`);
-          if (execFileSync(path.join(installed, 'zig'), ['version'], { encoding: 'utf8' }).trim() !== lock.version)
-            throw new Error('Zig version mismatch');
-          fs.appendFileSync(process.env.GITHUB_PATH, `${installed}\n`);
-          JS
+        run: node tools/install-zig.mjs
+      - name: Test locked toolchain installation rules
+        run: node --test tools/install-zig.test.mjs
       - name: Install build and bundle tools
         run: sudo apt-get update && sudo apt-get install -y binutils libarchive-tools e2fsprogs dosfstools mtools ntfs-3g btrfs-progs
       - name: Install locked developer dependencies
@@ -44,9 +25,9 @@ jobs:
       - name: Check source formatting
         run: zig build fmt-check
       - name: Test protocol and maintenance sessions
-        run: zig build check check-proto test-session test-maint-session-image test-maint-executor -Doptimize=safe -j4 --summary all
+        run: zig build check check-proto test-unit test-session test-maint-session-image -Doptimize=safe -j4 --summary all
       - name: Test storage, filesystems and crash recovery
-        run: zig build test-storage-unit test-filesystems test-storage-crash -Doptimize=safe -j4 --summary all
+        run: zig build test-filesystems test-storage-crash -Doptimize=safe -j4 --summary all
       - name: Export matching protocol
         run: zig build protocol-package -Doptimize=safe -j4 --summary all
       - name: Build static release artifacts

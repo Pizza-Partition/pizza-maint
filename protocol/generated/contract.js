@@ -946,7 +946,8 @@ export const CONTRACT = {
             "cancel",
             "prepare",
             "reboot",
-            "complete"
+            "complete",
+            "discover"
           ]
         },
         "draft": {
@@ -1014,6 +1015,26 @@ export const CONTRACT = {
         "outcome",
         "message"
       ]
+    },
+    "SessionDiscovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version"
+      ],
+      "properties": {
+        "version": {
+          "type": "integer",
+          "const": 4,
+          "x-zig-type": "u16"
+        },
+        "maintenance": {
+          "$ref": "#/$defs/MaintenanceSession"
+        },
+        "execution": {
+          "$ref": "#/$defs/ExecutionSession"
+        }
+      }
     }
   }
 };

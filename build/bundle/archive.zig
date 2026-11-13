@@ -115,10 +115,10 @@ pub fn appendFile(io: std.Io, source: []const u8, output: []const u8) !void {
     try destination.sync(io);
 }
 
-pub fn image(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, root: []const u8, destination: []const u8) !void {
+pub fn image(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, root: []const u8, destination: []const u8, policy: release.RuntimePolicy) !void {
     _ = try @import("root.zig").verify(a, io, root);
     const lock = try release.readLock(a, io, try std.fs.path.join(a, &.{ root, "release.json" }));
-    _ = try release.verify(a, io, env, root, lock);
+    _ = try release.verifySource(a, io, env, root, lock, policy);
     const output = try files.Output.init(a, io, destination, false);
     defer output.deinit(io);
     if (utils.filesystem.pathIsWithin(root, output.target)) return error.ImageMustBeOutsideSource;

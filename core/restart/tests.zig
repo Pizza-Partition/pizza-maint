@@ -3,6 +3,7 @@ test {
     std.testing.refAllDecls(@import("inventory.zig"));
     std.testing.refAllDecls(@import("planner.zig"));
     _ = @import("linux_inventory.zig");
+    _ = @import("planner_tests.zig");
     std.testing.refAllDecls(@import("compiler.zig"));
     std.testing.refAllDecls(@import("maintenance.zig"));
     _ = @import("uefi.zig");
