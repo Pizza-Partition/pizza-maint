@@ -19,3 +19,5 @@ test/artifacts/
 .aws/
 
 *.zcs
+
+__pycache__/

@@ -25,7 +25,7 @@ jobs:
         id: locked
         run: |
           set -euo pipefail
-          bash tools/fetch-deps.sh
+          python3 tools/fetch-deps.py
           zig build runtime-deps -Doptimize=safe -j4
           cp config/bundle/release.json zig-out/runtime/dependencies/release.json
           (cd zig-out/runtime/dependencies && sha256sum pizza-base-x86_64.img vmlinuz base.json > SHA256SUMS)

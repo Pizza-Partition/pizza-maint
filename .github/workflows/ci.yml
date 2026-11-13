@@ -21,7 +21,9 @@ jobs:
       - name: Install build and bundle tools
         run: sudo apt-get update && sudo apt-get install -y binutils libarchive-tools e2fsprogs dosfstools mtools ntfs-3g btrfs-progs
       - name: Fetch locked source dependencies
-        run: bash tools/fetch-deps.sh
+        run: |
+          python3 -m unittest discover -s tools -p test_fetch_deps.py -v
+          python3 tools/fetch-deps.py
       - name: Install locked developer dependencies
         run: zig build deps
       - name: Check source formatting
