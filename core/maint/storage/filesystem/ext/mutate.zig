@@ -28,12 +28,10 @@ fn repair(a: std.mem.Allocator, io: std.Io, overlay: *MutationBuilder) !void {
     const session = try Session.openStaged(a, io, overlay);
     defer session.close();
     const fs = session.fs;
-    if (!ext.clean(&fs.*.super.*) or !ext.supported(&fs.*.super.*)) return error.ExtRecoveryRequired;
-    if (c_api.ext2fs_blocks_count(fs.*.super) > ext.MAX_SCAN_BLOCKS or fs.*.super.*.s_inodes_count > ext.MAX_SCAN_INODES) return error.ExtScanBudgetExceeded;
-    try session.check(c_api.ext2fs_check_desc(fs));
-    for (0..fs.*.group_desc_count) |index| if (c_api.ext2fs_group_desc_csum_verify(fs, @intCast(index)) == 0) return error.ExtDescriptorChecksum;
-    try session.check(c_api.ext2fs_read_bitmaps(fs));
-    if (fs.*.flags & (c_api.EXT2_FLAG_BBITMAP_TAIL_PROBLEM | c_api.EXT2_FLAG_IBITMAP_TAIL_PROBLEM) != 0) return error.ExtBitmapPadding;
+    ext.loadBitmaps(session) catch |err| return switch (err) {
+        error.ExtUnsupportedFeature => error.ExtRecoveryRequired,
+        else => err,
+    };
     const buffer = try a.alloc(u8, fs.*.blocksize);
     defer a.free(buffer);
     var free_blocks: u64 = 0;
@@ -41,17 +39,9 @@ fn repair(a: std.mem.Allocator, io: std.Io, overlay: *MutationBuilder) !void {
     var changed = false;
     for (0..fs.*.group_desc_count) |index| {
         const group: c_api.dgrp_t = @intCast(index);
-        const group_blocks = c_api.ext2fs_group_blocks_count(fs, group);
-        if (group_blocks <= 0 or group_blocks > buffer.len * 8) return error.ExtInvalidGeometry;
-        const blocks: usize = @intCast(group_blocks);
-        try session.check(c_api.ext2fs_get_block_bitmap_range2(fs.*.block_map, c_api.ext2fs_group_first_block2(fs, group), blocks, buffer.ptr));
-        const block_count: u32 = @intCast(ext.countFree(buffer, blocks));
-        const start = @as(u64, group) * fs.*.super.*.s_inodes_per_group;
-        if (start >= fs.*.super.*.s_inodes_count) return error.ExtInvalidGeometry;
-        const inodes: usize = @intCast(@min(fs.*.super.*.s_inodes_per_group, fs.*.super.*.s_inodes_count - start));
-        if (inodes > buffer.len * 8) return error.ExtInvalidGeometry;
-        try session.check(c_api.ext2fs_get_inode_bitmap_range2(fs.*.inode_map, start + 1, inodes, buffer.ptr));
-        const inode_count: u32 = @intCast(ext.countFree(buffer, inodes));
+        const counts = try ext.freeCounts(session, group, buffer);
+        const block_count = counts.blocks;
+        const inode_count = counts.inodes;
         if (block_count != c_api.ext2fs_bg_free_blocks_count(fs, group) or inode_count != c_api.ext2fs_bg_free_inodes_count(fs, group)) {
             c_api.ext2fs_bg_free_blocks_count_set(fs, group, block_count);
             c_api.ext2fs_bg_free_inodes_count_set(fs, group, inode_count);

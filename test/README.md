@@ -21,7 +21,7 @@ The maintenance supervisor self-test now invokes bundled dynamic coreutils `bin/
 It checks dynamic execution without restoring browser sandbox tools. The completed M0 record lists actual commands and evidence;
 distro matrices, real hardware, native display and filesystem mutation remain separate gates.
 
-The tooling and test runners are Zig programs built with the pinned 0.17.0 release.
+The tooling and test runners are Zig programs built with the pinned 0.17.1 release.
 Run `zig build deps` to install locked formatter dependencies. `zig build test`
 runs core tests, runtime contract and consumption tests, initramfs tests and native integration tests.
 The execution frontend and npm frontend tests have been removed.

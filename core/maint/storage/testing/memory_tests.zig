@@ -137,3 +137,19 @@ test "same controller accounts concurrent allocation lanes" {
     try std.testing.expectEqual(0, controller.charged);
     try std.testing.expect(!fake.crossed and !controller.evidence().violated);
 }
+
+test "version hashing accounts source reads exactly once" {
+    const Source = struct {
+        fn read(ctx: *const anyopaque, _: std.Io, offset: u64, out: []u8) !void {
+            const bytes: *const [512]u8 = @ptrCast(@alignCast(ctx));
+            @memcpy(out, bytes[@intCast(offset)..][0..out.len]);
+        }
+    };
+    var fake: Fake = .{};
+    var controller = try memory.Controller.init(std.testing.io, .{ .probe = fake.probe() });
+    const bytes: [512]u8 = @splat(0x31);
+    const reader: storage.device.Reader = .{ .context = &bytes, .target = .{ .identity = @splat(1), .capacity = bytes.len, .sector_size = 512 }, .vtable = &.{ .read = Source.read }, .memory = &controller };
+    const builder = storage.program.PhysicalProgramBuilder.init(std.testing.allocator, reader);
+    try std.testing.expectEqualSlices(u8, &storage.model.digest(&bytes), &try builder.hashVersion(std.testing.io, 0, .{ .offset = 0, .length = bytes.len }));
+    try std.testing.expectEqual(@as(u64, bytes.len), controller.io_bytes);
+}

@@ -6,19 +6,19 @@ fingerprint and intent normalization. The exported package includes every source
 and a SHA-256 manifest. The desktop consumes this package from its pinned maintenance
 release; it does not carry a separately edited copy.
 
-| Previous name                                | Current name                                 | Responsibility                                    |
-| -------------------------------------------- | -------------------------------------------- | ------------------------------------------------- |
-| Pizza `core/boot/session.zig`                | `core/boot/ports.zig`                        | Live maintenance controller and ESP storage ports |
-| Pizza `core/desktop/http.zig`                | `core/desktop/asset_response.zig`            | Embedded asset response and MIME handling         |
-| Pizza `ui/partition/prototype/`              | `ui/partition/app/`                          | Shipped frontend                                  |
-| Pizza platform `session.zig` / `session/`    | `privileged_service.zig` / `ipc/`            | Privileged service lifecycle and IPC              |
-| Pizza GPT `slot()`                           | `entryIndex()`                               | Zero-based GPT entry index, including holes       |
-| pizza-maint `core/session*`                  | `core/legacy_handoff*`                       | Pre-v4 journal handoff and mounted journal home   |
-| pizza-maint `core/maintenance_session/`      | `core/restart/`                              | v4 reboot handoff and offline compilation         |
-| pizza-maint `maint/plan.zig` / `backend.zig` | `legacy_executor.zig` / `legacy_backend.zig` | Existing CLI execution and journal replay         |
-| storage `maintenance_session.Session`        | `recovery_session.RecoverySession`           | Durable recovery state machine                    |
-| storage `mutation.Builder`                   | `MutationBuilder`                            | Filesystem mutation overlay                       |
-| storage `program.Builder`                    | `PhysicalProgramBuilder`                     | Versioned physical storage program                |
+| Previous name                                | Current name                       | Responsibility                                    |
+| -------------------------------------------- | ---------------------------------- | ------------------------------------------------- |
+| Pizza `core/boot/session.zig`                | `core/boot/ports.zig`              | Live maintenance controller and ESP storage ports |
+| Pizza `core/desktop/http.zig`                | `core/desktop/asset_response.zig`  | Embedded asset response and MIME handling         |
+| Pizza `ui/partition/prototype/`              | `ui/partition/app/`                | Shipped frontend                                  |
+| Pizza platform `session.zig` / `session/`    | `privileged_service.zig` / `ipc/`  | Privileged service lifecycle and IPC              |
+| Pizza GPT `slot()`                           | `entryIndex()`                     | Zero-based GPT entry index, including holes       |
+| pizza-maint `core/session*`                  | `core/handoff*`                    | Pre-v4 journal handoff and mounted journal home   |
+| pizza-maint `core/maintenance_session/`      | `core/restart/`                    | v4 reboot handoff and offline compilation         |
+| pizza-maint `maint/plan.zig` / `backend.zig` | `executor.zig` / `backend.zig`     | Existing CLI execution and journal replay         |
+| storage `maintenance_session.Session`        | `recovery_session.RecoverySession` | Durable recovery state machine                    |
+| storage `mutation.Builder`                   | `MutationBuilder`                  | Filesystem mutation overlay                       |
+| storage `program.Builder`                    | `PhysicalProgramBuilder`           | Versioned physical storage program                |
 
 The obsolete host Prepared/Artifacts state machine and its tests were removed;
 the live Maintenance platform tests remain. Legacy maintenance execution is still

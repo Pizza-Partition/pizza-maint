@@ -392,17 +392,8 @@ fn checkCancelled(observer: ?Observer) !void {
     if (observer) |o| if (o.cancelled) |cancelled| if (cancelled(o.context)) return error.OperationCancelled;
 }
 fn readerHash(io: std.Io, reader: device.Reader, range: model.Range, observer: ?Observer) !model.Digest {
-    var buffer: [65536]u8 = undefined;
-    var hash = std.crypto.hash.sha2.Sha256.init(.{});
-    var done: u64 = 0;
-    while (done < range.length) {
-        try checkCancelled(observer);
-        const part = buffer[0..@intCast(@min(buffer.len, range.length - done))];
-        try reader.readInto(io, range.offset + done, part);
-        hash.update(part);
-        done += part.len;
-    }
-    return hash.finalResult();
+    const cancellation: ?device.Cancellation = if (observer) |o| (if (o.cancelled) |cancelled| .{ .context = o.context, .cancelled = cancelled } else null) else null;
+    return reader.digestCancellable(io, range, cancellation);
 }
 fn report(observer: ?Observer, step: usize, done: u64, total: u64) !void {
     if (observer) |o| {

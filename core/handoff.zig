@@ -1,7 +1,7 @@
 //! Protected reboot handoff and durable transition identity. No secrets use cmdline.
 const std = @import("std");
 const proto = @import("proto");
-pub const storage = @import("legacy_handoff/storage.zig");
+pub const storage = @import("handoff/storage.zig");
 pub const REQUEST_PATH = "/etc/pizza/session.json";
 pub const PLAN_PATH = "/etc/pizza/plan.json";
 pub const MOUNT_PATH = "/run/pizza/journal";
@@ -33,7 +33,7 @@ pub const Request = struct {
         for (self.source_boot_id, 0..) |c, i| {
             if (i == 8 or i == 13 or i == 18 or i == 23) {
                 if (c != '-') return error.InvalidSession;
-            } else if (!std.ascii.isDigit(c) and !(c >= 'a' and c <= 'f')) return error.InvalidSession;
+            } else if (std.mem.indexOfScalar(u8, "0123456789abcdef", c) == null) return error.InvalidSession;
         }
         for (self.plan_id) |c| if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return error.InvalidSession;
         try self.home.validate();
@@ -48,9 +48,7 @@ pub const Marker = struct {
 };
 
 pub fn hex(value: []const u8, size: usize) bool {
-    if (value.len != size) return false;
-    for (value) |c| if (!(c >= '0' and c <= '9') and !(c >= 'a' and c <= 'f')) return false;
-    return true;
+    return value.len == size and std.mem.indexOfNone(u8, value, "0123456789abcdef") == null;
 }
 pub fn digest(a: std.mem.Allocator, bytes: []const u8) ![]const u8 {
     var hash: [32]u8 = undefined;

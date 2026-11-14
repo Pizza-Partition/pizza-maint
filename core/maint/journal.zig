@@ -35,7 +35,7 @@ pub const Boundary = struct {
         for (self.boot_id, 0..) |c, i| {
             if (i == 8 or i == 13 or i == 18 or i == 23) {
                 if (c != '-') return error.InvalidBoundary;
-            } else if (!std.ascii.isDigit(c) and !(c >= 'a' and c <= 'f')) return error.InvalidBoundary;
+            } else if (std.mem.indexOfScalar(u8, "0123456789abcdef", c) == null) return error.InvalidBoundary;
         }
         if (self.plan_id.len == 0 or self.plan_id.len > 64) return error.InvalidBoundary;
         for (self.plan_id) |c| if (!std.ascii.isAlphanumeric(c) and c != '_' and c != '-') return error.InvalidBoundary;
@@ -47,7 +47,7 @@ pub const Boundary = struct {
         if ((self.home.device_uuid == null) != (self.home.device_path == null)) return error.InvalidBoundary;
         if (self.home.device_uuid) |uuid| {
             if (uuid.len != 32) return error.InvalidBoundary;
-            for (uuid) |c| if (!std.ascii.isDigit(c) and !(c >= 'a' and c <= 'f')) return error.InvalidBoundary;
+            if (std.mem.indexOfNone(u8, uuid, "0123456789abcdef") != null) return error.InvalidBoundary;
             try @import("utils").filesystem.checkPath(self.home.device_path.?);
         }
     }

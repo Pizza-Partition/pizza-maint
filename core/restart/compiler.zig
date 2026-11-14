@@ -9,7 +9,7 @@ pub fn hex16(text: []const u8) ![16]u8 {
     for (&bytes, 0..) |*byte, i| byte.* = std.fmt.parseInt(u8, text[i * 2 ..][0..2], 16) catch return error.InvalidGptUuid;
     return bytes;
 }
-pub fn compileOffline(a: std.mem.Allocator, io: std.Io, reader: storage.device.Reader, inventory: wire.InventorySnapshot, draft: wire.PlanDraft) !storage.service.Plan {
+pub fn compileOffline(a: std.mem.Allocator, io: std.Io, reader: storage.device.Reader, inventory: wire.InventorySnapshot, draft: wire.PlanDraft) !struct { plan: storage.service.Plan, digest: [32]u8 } {
     const validated = try @import("planner.zig").validate(a, inventory, draft);
     for (validated.diagnostics) |d| if (d.severity == .@"error") return error.InvalidHostPlan;
     if (!std.mem.eql(u8, &reader.target.identity, &try proto.hexDigest(draft.disk_identity))) return error.TransactionTargetMismatch;
@@ -52,8 +52,9 @@ pub fn compileOffline(a: std.mem.Allocator, io: std.Io, reader: storage.device.R
         try entries.append(a, entry);
     }
     var plan = try storage.service.layoutWithFormats(a, io, reader, entries.items, formats.items);
-    plan.program = try storage.program.bindRequest(a, plan.program, try proto.hexDigest(validated.digest));
-    return plan;
+    const digest = try proto.hexDigest(validated.digest);
+    plan.program = try storage.program.bindRequest(a, plan.program, digest);
+    return .{ .plan = plan, .digest = digest };
 }
 fn freeSlot(table: storage.partition_table.Layout, entries: []const storage.partition_table.Entry, desired: []const wire.DesiredPartition) !u32 {
     const count = std.mem.readInt(u32, table.original[1].content[80..84], .little);

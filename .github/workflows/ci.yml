@@ -14,7 +14,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
-      - name: Install locked Zig 0.17.0
+      - name: Install locked Zig 0.17.1
         run: node tools/install-zig.mjs
       - name: Test locked toolchain installation rules
         run: node --test tools/install-zig.test.mjs
@@ -29,7 +29,7 @@ jobs:
       - name: Check source formatting
         run: zig build fmt-check
       - name: Test protocol and maintenance sessions
-        run: zig build check check-proto test-unit test-session test-maint-session-image -Doptimize=safe -j4 --summary all
+        run: zig build check test-unit test-session test-maint-session-image -Doptimize=safe -j4 --summary all
       - name: Test storage, filesystems and crash recovery
         run: zig build test-filesystems test-storage-crash -Doptimize=safe -j4 --summary all
       - name: Export matching protocol

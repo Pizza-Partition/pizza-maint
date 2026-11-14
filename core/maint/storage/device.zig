@@ -6,6 +6,11 @@ const Controller = @import("memory.zig").Controller;
 /// Provenance for views into a shared device, including nested partitions.
 pub const Region = struct { identity: model.Digest, range: model.Range };
 
+pub const Cancellation = struct {
+    context: *anyopaque,
+    cancelled: *const fn (*anyopaque) bool,
+};
+
 pub const Reader = struct {
     pub const VTable = struct { read: *const fn (*const anyopaque, std.Io, u64, []u8) anyerror!void };
     context: *const anyopaque,
@@ -37,11 +42,15 @@ pub const Reader = struct {
     /// Stream a range digest with bounded memory, including clone guards and
     /// execution readback. No operation-specific verifier is needed.
     pub fn digest(self: Reader, io: std.Io, range: model.Range) !model.Digest {
+        return self.digestCancellable(io, range, null);
+    }
+    pub fn digestCancellable(self: Reader, io: std.Io, range: model.Range, cancellation: ?Cancellation) !model.Digest {
         if (try range.end() > self.target.capacity) return error.RangeOutsideDevice;
         var buffer: [65536]u8 = undefined;
         var hash = std.crypto.hash.sha2.Sha256.init(.{});
         var done: u64 = 0;
         while (done < range.length) {
+            if (cancellation) |cancel| if (cancel.cancelled(cancel.context)) return error.OperationCancelled;
             const part = buffer[0..@intCast(@min(buffer.len, range.length - done))];
             try self.readInto(io, range.offset + done, part);
             hash.update(part);
@@ -132,3 +141,32 @@ pub const Device = struct {
         if (self.memory) |budget| try budget.check();
     }
 };
+
+test "streamed reader digest handles chunk tails, bounds and cancellation" {
+    const Source = struct {
+        bytes: []const u8,
+        reads: usize = 0,
+        fn read(ctx: *const anyopaque, _: std.Io, offset: u64, output: []u8) !void {
+            const self: *@This() = @ptrCast(@alignCast(@constCast(ctx)));
+            self.reads += 1;
+            @memcpy(output, self.bytes[@intCast(offset)..][0..output.len]);
+        }
+        fn cancelled(ctx: *anyopaque) bool {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            return self.reads != 0;
+        }
+    };
+    var bytes: [65536 + 512]u8 = undefined;
+    for (&bytes, 0..) |*byte, i| byte.* = @intCast(i % 251);
+    var source: Source = .{ .bytes = &bytes };
+    const reader: Reader = .{ .context = &source, .target = .{ .identity = @splat(1), .capacity = bytes.len, .sector_size = 512 }, .vtable = &.{ .read = Source.read } };
+    const range: model.Range = .{ .offset = 7, .length = bytes.len - 11 };
+    try std.testing.expectEqualSlices(u8, &model.digest(bytes[7 .. bytes.len - 4]), &try reader.digest(std.testing.io, range));
+    try std.testing.expectEqual(@as(usize, 2), source.reads);
+    source.reads = 0;
+    try std.testing.expectError(error.OperationCancelled, reader.digestCancellable(std.testing.io, range, .{ .context = &source, .cancelled = Source.cancelled }));
+    try std.testing.expectEqual(@as(usize, 1), source.reads);
+    source.reads = 0;
+    try std.testing.expectError(error.RangeOutsideDevice, reader.digest(std.testing.io, .{ .offset = bytes.len, .length = 1 }));
+    try std.testing.expectEqual(@as(usize, 0), source.reads);
+}

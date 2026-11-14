@@ -152,8 +152,8 @@ test "approved GPT deletion compiles through native storage and remains reversib
     const inventory: wire.InventorySnapshot = .{ .version = 4, .snapshot_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", .platform = .linux, .disks = &disks };
     const draft: wire.PlanDraft = .{ .version = 4, .snapshot_id = inventory.snapshot_id, .disk_identity = disk_id, .intents = &.{.{ .kind = .delete, .partition_id = partition_id }} };
     const compiled = try @import("compiler.zig").compileOffline(a, io, m.disk().reader(), inventory, draft);
-    try storage.program_executor.executeDeferred(a, io, m.disk(), m.store(), compiled.program, &.{}, null, null);
-    try std.testing.expect(try compiled.verify(a, io, m.disk().reader()));
+    try storage.program_executor.executeDeferred(a, io, m.disk(), m.store(), compiled.plan.program, &.{}, null, null);
+    try std.testing.expect(try compiled.plan.verify(a, io, m.disk().reader()));
     try std.testing.expectEqual(0, (try storage.partition_table.BUILTIN.readLayout(a, io, m.disk().reader())).entries.len);
     try std.testing.expectEqual(.rolled_back, try storage.program_executor.undo(a, io, m.disk(), m.store(), null));
     try std.testing.expectEqualSlices(u8, bytes, m.live);

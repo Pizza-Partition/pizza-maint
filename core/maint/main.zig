@@ -1,12 +1,12 @@
 //! Ordinary maintenance application: business state and journal share one process.
 const std = @import("std");
 const clap = @import("clap");
-const business = @import("maintenance").legacy_backend;
+const business = @import("maintenance").backend;
 const proto = @import("proto");
 const journal = @import("journal");
-const plan_module = @import("maintenance").legacy_executor;
+const plan_module = @import("maintenance").executor;
 const tui = @import("execution_tui");
-const session = @import("legacy_handoff");
+const session = @import("handoff");
 const filesystem = @import("utils").filesystem;
 var stop_requested: std.atomic.Value(bool) = .init(false);
 fn requestStop(_: std.os.linux.SIG) callconv(.c) void {
@@ -130,7 +130,6 @@ pub fn runWithDevices(init: std.process.Init, devices: @import("maintenance").de
     if (exit_after_plan and !executing) return error.ExitAfterPlanNeedsExecution;
     const execution_options: plan_module.Options = .{ .devices = devices };
     if (executing) try installStopSignals();
-    try execution_options.validate();
     if (!executing and (parsed.args.@"journal-home" != null or parsed.args.@"exit-after-plan" != 0)) return error.ExecutionOptionNeedsExecute;
     if (executing and parsed.args.journal != null) return error.ExecutionConflictsWithReadOnlyJournal;
     var plan: ?proto.Plan = null;
@@ -157,7 +156,7 @@ pub fn runWithDevices(init: std.process.Init, devices: @import("maintenance").de
         if (kind != filesystem.EXT4_SUPER_MAGIC and kind != filesystem.XFS_SUPER_MAGIC and kind != filesystem.BTRFS_SUPER_MAGIC) return error.JournalHomeMustBePersistent;
         const anchor = try journal.captureBoundary(a, init.io, .{ .state = .start, .boot_id = "", .utc_unix_ns = "", .plan_id = actual_plan.id, .home = .{ .kind = .other_device, .path = home, .device_uuid = if (request) |r| r.home.uuid else null, .device_path = if (request) |r| r.home.path else null } });
         const value = try a.create(plan_module.Executor);
-        value.* = try plan_module.Executor.start(a, init.io, directory, actual_plan, anchor.boundary, anchor.monotonic_ns, execution_options);
+        value.* = try plan_module.Executor.start(init.io, directory, actual_plan, anchor.boundary, anchor.monotonic_ns, execution_options);
         executor = value;
         journal_path = try std.fs.path.join(a, &.{ home, "journal.bin" });
     }

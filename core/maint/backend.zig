@@ -2,7 +2,7 @@
 const std = @import("std");
 const proto = @import("proto");
 const journal = @import("journal");
-const plan_module = @import("legacy_executor.zig");
+const plan_module = @import("executor.zig");
 
 pub const Batch = struct { json: []const u8, last: u64, count: usize };
 pub const Backend = struct {
@@ -15,7 +15,7 @@ pub const Backend = struct {
     executor: ?*plan_module.Executor = null,
     observed_offset: ?u64 = null,
     cancelled: bool = false,
-    journal_home: ?*@import("legacy_handoff").storage.Mounted = null,
+    journal_home: ?*@import("handoff").storage.Mounted = null,
 
     pub fn init(a: std.mem.Allocator, plan: ?proto.Plan, journal_path: ?[]const u8) Backend {
         return .{ .allocator = a, .arena = .init(a), .plan = plan, .journal_path = journal_path };

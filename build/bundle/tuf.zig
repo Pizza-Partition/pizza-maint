@@ -347,7 +347,7 @@ pub fn refresh(a: std.mem.Allocator, initial: []const u8, state: *State, now: u6
     if (length > METADATA_LIMIT) return error.TufTargetTooLarge;
     const digest = try string(try field(try field(description, "hashes"), "sha256"));
     if (digest.len != 64) return error.InvalidTufMetadata;
-    for (digest) |b| if (!std.ascii.isDigit(b) and (b < 'a' or b > 'f')) return error.InvalidTufMetadata;
+    if (std.mem.indexOfNone(u8, digest, "0123456789abcdef") != null) return error.InvalidTufMetadata;
     const consistent = try field(root.signed, "consistent_snapshot");
     if (consistent != .bool) return error.InvalidTufMetadata;
     const path = if (consistent.bool) try a.print("targets/{s}.{s}", .{ digest, TARGET_NAME }) else "targets/" ++ TARGET_NAME;

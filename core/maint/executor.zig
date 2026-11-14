@@ -6,10 +6,10 @@ const storage = @import("storage");
 const devices = @import("devices.zig");
 pub const Options = struct {
     devices: devices.Provider = .{},
-    pub fn validate(_: Options) !void {}
 };
 pub const validate = proto.validatePlan;
 const Atomic = std.atomic.Value;
+const Phase = enum(u8) { planning, applying, restoring };
 const Work = struct {
     io: std.Io,
     header: proto.Plan,
@@ -29,14 +29,14 @@ const Work = struct {
     summary: proto.Plan,
     planned: Atomic(bool) = .init(false),
     cancel_requested: Atomic(bool) = .init(false),
-    phase: Atomic(u8) = .init(0),
+    phase: Atomic(Phase) = .init(.planning),
     status: Atomic(u8) = .init(@backingInt(proto.wire.ExecutionStatus.running)),
     completed: Atomic(u32) = .init(0),
     completed_bytes: Atomic(u64) = .init(0),
     visible_bytes: Atomic(u64) = .init(0),
     total_bytes: Atomic(u64) = .init(0),
     error_value: ?anyerror = null,
-    fn a(self: *Work) std.mem.Allocator {
+    fn allocator(self: *Work) std.mem.Allocator {
         return self.arena.allocator();
     }
     fn appendNote(self: *Work, text: []const u8) !void {
@@ -45,7 +45,7 @@ const Work = struct {
         if (self.writer) |*writer| _ = try writer.note(self.io, 0, try journal.monotonicNow(self.io), text);
     }
     fn publishSummary(self: *Work, program: storage.program.Program) !void {
-        const steps = try self.a().alloc(proto.wire.Step, program.steps.len);
+        const steps = try self.allocator().alloc(proto.wire.Step, program.steps.len);
         var bytes: u64 = 0;
         for (program.steps, steps, 0..) |step, *summary, i| {
             summary.* = .{ .id = @intCast(i + 1), .label = switch (step.operation) {
@@ -72,7 +72,7 @@ const Work = struct {
         self.perform() catch |err| {
             self.error_value = err;
             if (self.recovery_admitted) if (self.target) |*target| {
-                self.phase.store(2, .release);
+                self.phase.store(.restoring, .release);
                 var recovery_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
                 defer recovery_arena.deinit();
                 const result = storage.program_executor.recover(recovery_arena.allocator(), self.io, target.backend(), self.files.store(), null) catch |restore_error| {
@@ -96,7 +96,7 @@ const Work = struct {
     fn selectedRange(self: *Work, request: proto.wire.OperationRequest, reader: storage.device.Reader) !storage.model.Range {
         if (request.partition_id) |id| {
             const digest = try proto.hexDigest(id);
-            const layout = try storage.partition_table.BUILTIN.readLayout(self.a(), self.io, reader);
+            const layout = try storage.partition_table.BUILTIN.readLayout(self.allocator(), self.io, reader);
             for (layout.entries) |entry| if (std.mem.eql(u8, &entry.id, &digest)) return entry.range;
             return error.PartitionIdentityChanged;
         }
@@ -104,15 +104,15 @@ const Work = struct {
     }
     fn perform(self: *Work) !void {
         const request = self.header.request orelse return error.MissingOperationRequest;
-        self.target = try self.devices.open(self.a(), self.io, request.target, true);
+        self.target = try self.devices.open(self.allocator(), self.io, request.target, true);
         if (request.operation == .layout and !self.target.?.whole_root) return error.LayoutRequiresWholeDisk;
         try self.target.?.admitRecovery(self.io, self.directory);
         self.recovery_admitted = true;
         // Admission precedes even presentation-log creation: a recovery home
         // on the target must not modify that disk while rejecting the request.
         try self.writer_mutex.lock(self.io);
-        self.writer = journal.Writer.create(self.a(), self.io, self.directory, self.boundary, self.started_ns, .{}) catch |err| switch (err) {
-            error.PathAlreadyExists => journal.Writer.open(self.a(), self.io, self.directory, self.boundary, self.started_ns, .{}) catch null,
+        self.writer = journal.Writer.create(self.allocator(), self.io, self.directory, self.boundary, self.started_ns, .{}) catch |err| switch (err) {
+            error.PathAlreadyExists => journal.Writer.open(self.allocator(), self.io, self.directory, self.boundary, self.started_ns, .{}) catch null,
             else => {
                 self.writer_mutex.unlock(self.io);
                 return err;
@@ -125,17 +125,17 @@ const Work = struct {
             existing = true;
             break;
         };
-        const request_digest = storage.model.digest(try std.json.Stringify.valueAlloc(self.a(), request, .{}));
+        const request_digest = storage.model.digest(try std.json.Stringify.valueAlloc(self.allocator(), request, .{}));
         if (existing or request.operation == .recover) {
             var matching = request.operation == .recover;
-            self.phase.store(2, .release);
+            self.phase.store(.restoring, .release);
             if (try self.files.store().exists(self.io, .program)) {
-                const bytes = try self.files.store().read(self.io, .program, self.a(), storage.program.MAX_ENCODED_BYTES);
-                const saved = try storage.program.decode(self.a(), bytes);
+                const bytes = try self.files.store().read(self.io, .program, self.allocator(), storage.program.MAX_ENCODED_BYTES);
+                const saved = try storage.program.decode(self.allocator(), bytes);
                 matching = matching or std.mem.eql(u8, &saved.request_digest, &request_digest);
                 try self.publishSummary(saved);
             }
-            const result = try storage.program_executor.recover(self.a(), self.io, disk, self.files.store(), null);
+            const result = try storage.program_executor.recover(self.allocator(), self.io, disk, self.files.store(), null);
             if (result == .committed) self.target.?.refreshLayout() catch |err| {
                 self.error_value = err;
                 self.status.store(@backingInt(proto.wire.ExecutionStatus.degraded), .release);
@@ -152,8 +152,8 @@ const Work = struct {
         if (self.writer == null) return error.EventJournalUnavailable;
         const range = try self.selectedRange(request, disk.reader());
         var plan: storage.service.Plan = if (request.operation == .layout) blk: {
-            const layout = try storage.partition_table.BUILTIN.readLayout(self.a(), self.io, disk.reader());
-            const entries = try self.a().dupe(storage.partition_table.Entry, layout.entries);
+            const layout = try storage.partition_table.BUILTIN.readLayout(self.allocator(), self.io, disk.reader());
+            const entries = try self.allocator().dupe(storage.partition_table.Entry, layout.entries);
             for (request.partitions) |change| {
                 const id = try proto.hexDigest(change.partition_id);
                 var found = false;
@@ -164,23 +164,23 @@ const Work = struct {
                 };
                 if (!found) return error.PartitionIdentityChanged;
             }
-            break :blk try storage.service.layout(self.a(), self.io, disk.reader(), entries);
+            break :blk try storage.service.layout(self.allocator(), self.io, disk.reader(), entries);
         } else if (request.operation == .copy) blk: {
             const source = request.source.?;
-            self.source = try self.devices.open(self.a(), self.io, source, false);
-            break :blk try storage.service.copy(self.a(), self.io, self.source.?.backend().reader().withMemory(&self.budget), disk.reader(), range);
+            self.source = try self.devices.open(self.allocator(), self.io, source, false);
+            break :blk try storage.service.copy(self.allocator(), self.io, self.source.?.backend().reader().withMemory(&self.budget), disk.reader(), range);
         } else blk: {
             const operation = std.meta.stringToEnum(storage.model.Kind, @tagName(request.operation)) orelse return error.InvalidOperationRequest;
             const driver = if (request.filesystem) |format| try storage.filesystem.BUILTIN.get(std.meta.stringToEnum(storage.model.Filesystem, @tagName(format)).?) else null;
-            break :blk try storage.service.filesystem(self.a(), self.io, disk.reader(), range, driver, .{ .operation = operation, .bytes = if (request.target_bytes) |bytes| try proto.byteCount(bytes) else 0, .partition_offset = range.offset });
+            break :blk try storage.service.filesystem(self.allocator(), self.io, disk.reader(), range, driver, .{ .operation = operation, .bytes = if (request.target_bytes) |bytes| try proto.byteCount(bytes) else 0, .partition_offset = range.offset });
         };
-        plan.program = try storage.program.bindRequest(self.a(), plan.program, request_digest);
+        plan.program = try storage.program.bindRequest(self.allocator(), plan.program, request_digest);
         self.physical_plan = plan;
         try self.publishSummary(plan.program);
-        try self.appendNote(try self.a().print("compiled_program_sha256={s}", .{std.fmt.bytesToHex(plan.program.digest, .lower)}));
-        self.phase.store(1, .release);
-        const sources: []const storage.device.Reader = if (self.source) |*source| try self.a().dupe(storage.device.Reader, &.{source.backend().reader().withMemory(&self.budget)}) else &.{};
-        try storage.program_executor.executeWithSources(self.a(), self.io, disk, self.files.store(), plan.program, sources, .{ .context = self, .check = verify }, .{ .context = self, .event = event, .cancelled = cancelled, .progress = progress });
+        try self.appendNote(try self.allocator().print("compiled_program_sha256={s}", .{std.fmt.bytesToHex(plan.program.digest, .lower)}));
+        self.phase.store(.applying, .release);
+        const sources: []const storage.device.Reader = if (self.source) |*source| try self.allocator().dupe(storage.device.Reader, &.{source.backend().reader().withMemory(&self.budget)}) else &.{};
+        try storage.program_executor.executeWithSources(self.allocator(), self.io, disk, self.files.store(), plan.program, sources, .{ .context = self, .check = verify }, .{ .context = self, .event = event, .cancelled = cancelled, .progress = progress });
         try self.writer_mutex.lock(self.io);
         defer self.writer_mutex.unlock(self.io);
         var boundary = self.boundary;
@@ -199,7 +199,7 @@ const Work = struct {
     }
     fn verify(ctx: *const anyopaque, io: std.Io, reader: storage.device.Reader) !bool {
         const self: *Work = @constCast(@as(*const Work, @ptrCast(@alignCast(ctx))));
-        return self.physical_plan.?.verify(self.a(), io, reader);
+        return self.physical_plan.?.verify(self.allocator(), io, reader);
     }
     fn progress(ctx: *anyopaque, _: usize, done: u64, _: u64) !void {
         const self: *Work = @ptrCast(@alignCast(ctx));
@@ -209,7 +209,7 @@ const Work = struct {
         const self: *Work = @ptrCast(@alignCast(ctx));
         const plan = self.physical_plan.?;
         const step = self.summary.steps[completed - 1];
-        if (plan.table_checkpoint == completed) if (!try plan.verifyFilesystems(self.a(), self.io, self.target.?.backend().reader())) return error.ProgramVerificationFailed;
+        if (plan.table_checkpoint == completed) if (!try plan.verifyFilesystems(self.allocator(), self.io, self.target.?.backend().reader())) return error.ProgramVerificationFailed;
         try self.writer_mutex.lock(self.io);
         defer self.writer_mutex.unlock(self.io);
         // These records describe actual completed physical steps. The physical
@@ -236,9 +236,8 @@ pub const Executor = struct {
     byte_buffers: [2][20]u8 = undefined,
     completed_bytes: u64 = 0,
     total_bytes: u64 = 0,
-    pub fn start(_: std.mem.Allocator, io: std.Io, directory: std.Io.Dir, plan: proto.Plan, boundary: journal.Boundary, now: u64, options: Options) !Executor {
+    pub fn start(io: std.Io, directory: std.Io.Dir, plan: proto.Plan, boundary: journal.Boundary, now: u64, options: Options) !Executor {
         try validate(plan);
-        try options.validate();
         if (plan.request == null) return error.MissingOperationRequest;
         if (!std.mem.eql(u8, plan.id, boundary.plan_id)) return error.JournalPlanMismatch;
         const work = try std.heap.page_allocator.create(Work);
@@ -286,9 +285,9 @@ pub const Executor = struct {
         const status: proto.wire.ExecutionStatus = @fromBackingInt(@intCast(self.work.status.load(.acquire)));
         const committed = self.work.completed.load(.acquire);
         const message = if (status == .failed or status == .degraded) @errorName(self.work.error_value.?) else if (status == .succeeded) "Storage changes committed" else if (status == .interrupted) "Operation interrupted; recovery completed" else switch (self.work.phase.load(.acquire)) {
-            0 => "Planning storage changes",
-            1 => "Applying storage changes",
-            else => "Restoring original layout",
+            .planning => "Planning storage changes",
+            .applying => "Applying storage changes",
+            .restoring => "Restoring original layout",
         };
         if (status != self.status or committed != self.committed or !std.mem.eql(u8, self.message, message)) {
             self.status = status;

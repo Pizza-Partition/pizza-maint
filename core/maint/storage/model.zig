@@ -124,3 +124,22 @@ pub fn digest(bytes: []const u8) Digest {
     std.crypto.hash.sha2.Sha256.hash(bytes, &result, .{});
     return result;
 }
+
+/// All registered operations are validated; only the check/repair scope varies.
+pub fn validatedOperations(comptime check_scope: CheckScope) [std.enums.values(Kind).len]Capability {
+    var caps: [std.enums.values(Kind).len]Capability = undefined;
+    for (std.enums.values(Kind), &caps) |kind, *cap| cap.* = .{ .operation = kind, .support = .validated, .reason = .available, .scope = if (kind == .check or kind == .repair) check_scope else .filesystem };
+    return caps;
+}
+
+test "validated operation tables preserve allocation-only check and repair scope" {
+    const full = validatedOperations(.filesystem);
+    const allocation = validatedOperations(.allocation_metadata);
+    for (full, allocation) |whole, scoped| {
+        try std.testing.expectEqual(whole.operation, scoped.operation);
+        try std.testing.expectEqual(.validated, scoped.support);
+        try std.testing.expectEqual(.available, scoped.reason);
+        try std.testing.expectEqual(.filesystem, whole.scope);
+        try std.testing.expectEqual(if (scoped.operation == .check or scoped.operation == .repair) CheckScope.allocation_metadata else CheckScope.filesystem, scoped.scope);
+    }
+}

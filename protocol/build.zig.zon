@@ -2,6 +2,6 @@
     .name = .pizza_protocol,
     .fingerprint = 0x5e6efb1a9e50ebf4,
     .version = "4.0.2",
-    .minimum_zig_version = "0.17.0",
+    .minimum_zig_version = "0.17.1",
     .paths = .{ "build.zig", "build.zig.zon", "root.zig", "generated.zig", "contract.json", "generated", "README.md", "manifest.json", "uefi.zig", "firmware_pin.zig", "receipt_envelope.zig", "inventory_fingerprint.zig", "intent_normalization.zig", "plan_validation.zig", "plan_validation_cases.zig" },
 }

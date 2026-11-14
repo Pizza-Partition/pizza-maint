@@ -1,8 +1,8 @@
 .{
     .name = .pizza_maint,
-    .version = "0.5.6",
+    .version = "0.5.7",
     .fingerprint = 0x397bd5fc29ca968f,
-    .minimum_zig_version = "0.17.0",
+    .minimum_zig_version = "0.17.1",
     .dependencies = .{
         .clap = .{
             .url = "git+https://github.com/Hejsil/zig-clap#05faf3905e8548f5cc269a8836e154065e70128d",

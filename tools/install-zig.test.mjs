@@ -7,10 +7,10 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { installZig } from './install-zig.mjs';
 
-async function fixture(t, reported = '0.17.0') {
+async function fixture(t, reported = '0.17.1') {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pizza-zig-test-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
-  const name = 'zig-x86_64-linux-0.17.0';
+  const name = 'zig-x86_64-linux-0.17.1';
   await fs.mkdir(path.join(root, name));
   await fs.writeFile(path.join(root, name, 'zig'), `#!/bin/sh\nprintf '%s\\n' '${reported}'\n`, {
     mode: 0o755,
@@ -19,7 +19,7 @@ async function fixture(t, reported = '0.17.0') {
   const bytes = await fs.readFile(path.join(root, 'fixture.tar.xz'));
   const lockPath = path.join(root, 'lock.json');
   const lock = {
-    version: '0.17.0',
+    version: '0.17.1',
     'x86_64-linux': {
       url: 'https://ziglang.org/fixture',
       sha256: createHash('sha256').update(bytes).digest('hex'),
@@ -69,7 +69,7 @@ test(
   'wrong executable version is rejected before PATH publication',
   { skip: process.platform !== 'linux' },
   async (t) => {
-    const f = await fixture(t, '0.17.1');
+    const f = await fixture(t, '0.17.0');
     await assert.rejects(installZig(f.options), /version mismatch/);
     await assert.rejects(fs.stat(f.pathFile), { code: 'ENOENT' });
   },

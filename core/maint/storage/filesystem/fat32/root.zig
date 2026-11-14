@@ -2,14 +2,11 @@
 const std = @import("std");
 const model = @import("../../model.zig");
 const device = @import("../../device.zig");
+const check_errors = @import("../check_errors.zig");
 pub const semantic = @import("semantic.zig");
 pub const format = @import("format.zig");
 pub const scan = @import("scan.zig");
-pub const OPERATIONS = init: {
-    var caps: [std.enums.values(model.Kind).len]model.Capability = undefined;
-    for (std.enums.values(model.Kind), &caps) |kind, *cap| cap.* = .{ .operation = kind, .support = .validated, .reason = .available };
-    break :init caps;
-};
+pub const OPERATIONS = model.validatedOperations(.filesystem);
 pub fn probe(_: *const anyopaque, io: std.Io, reader: device.Reader) !bool {
     if (reader.target.capacity < 512) return false;
     var bytes: [512]u8 = undefined;
@@ -47,7 +44,7 @@ pub fn inspect(_: *const anyopaque, a: std.mem.Allocator, io: std.Io, reader: de
 
 pub fn check(_: *const anyopaque, a: std.mem.Allocator, io: std.Io, reader: device.Reader) !model.Check {
     const loaded = scan.load(a, io, reader, false) catch |err| {
-        if (!std.mem.startsWith(u8, @errorName(err), "Fat") or err == error.FatResourceLimit) return err;
+        if (!check_errors.contains(check_errors.Fat, err)) return err;
         return .{ .consistent = false, .detail = @errorName(err) };
     };
     return .{ .consistent = true, .detail = try a.print("FAT32: {d} files/directories; {d} free clusters; complete allocation and directory chains checked", .{ loaded.graph.objects.items.len, loaded.graph.free }) };

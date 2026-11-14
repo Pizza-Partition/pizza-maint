@@ -217,13 +217,14 @@ pub fn build(b: *std.Build) void {
     compile_policy.configure(protocol_export);
     const export_package = b.addRunArtifact(protocol_export);
     const protocol_directory = export_package.addOutputDirectoryArg("protocol");
-    const protocol_archive = export_package.addOutputFileArg("pizza-protocol-4.0.2.tar.gz");
+    const protocol_name = "pizza-protocol-" ++ @import("protocol/build.zig.zon").version ++ ".tar.gz";
+    const protocol_archive = export_package.addOutputFileArg(protocol_name);
     // Track the actual inputs, excluding nested developer build caches.
     for ([_][]const u8{ "build.zig", "build.zig.zon", "README.md", "root.zig", "contract.json", "generated.zig", "generated/contract.js", "generated/contract.d.ts", "uefi.zig", "firmware_pin.zig", "receipt_envelope.zig", "inventory_fingerprint.zig", "intent_normalization.zig", "plan_validation.zig", "plan_validation_cases.zig" }) |name|
         export_package.addFileArg(b.path(b.fmt("protocol/{s}", .{name})));
     export_package.step.dependOn(&check.step);
     const install_protocol = b.addInstallDirectory(.{ .source_dir = protocol_directory, .install_dir = .prefix, .install_subdir = "share/pizza/protocol" });
-    const install_protocol_archive = b.addInstallFile(protocol_archive, "share/pizza/pizza-protocol-4.0.2.tar.gz");
+    const install_protocol_archive = b.addInstallFile(protocol_archive, b.fmt("share/pizza/{s}", .{protocol_name}));
     const protocol_step = b.step("protocol-package", "Export the independent v4 protocol package and fetchable archive");
     protocol_step.dependOn(&install_protocol.step);
     protocol_step.dependOn(&install_protocol_archive.step);
@@ -314,7 +315,7 @@ pub fn build(b: *std.Build) void {
         exe.root_module.addImport("bundle", core_bundle);
         exe.root_module.addImport("utils", core_utils);
         exe.root_module.addImport("journal", core_journal);
-        exe.root_module.addImport("legacy_handoff", core_session);
+        exe.root_module.addImport("handoff", core_session);
         exe.root_module.addImport("initramfs_archive", b.createModule(.{ .root_source_file = b.path("core/initramfs/archive.zig"), .target = target, .optimize = optimize, .imports = &.{.{ .name = "utils", .module = core_utils }} }));
         if (std.mem.eql(u8, entry[0], "pizza-init")) {
             exe.root_module.addImport("power", power);
@@ -420,7 +421,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "utils", .module = app_utils },
             .{ .name = "clap", .module = b.dependency("clap", .{ .target = app_target, .optimize = optimize }).module("clap") },
             .{ .name = "journal", .module = app_journal },
-            .{ .name = "legacy_handoff", .module = app_session },
+            .{ .name = "handoff", .module = app_session },
             .{ .name = "maintenance", .module = app_ui.maintenance },
             .{ .name = "execution_tui", .module = app_ui.tui },
         },
@@ -502,7 +503,7 @@ pub fn build(b: *std.Build) void {
     );
     compile_policy.configure(tests);
     tests.root_module.addImport("journal", core_journal);
-    tests.root_module.addImport("legacy_handoff", core_session);
+    tests.root_module.addImport("handoff", core_session);
     tests.root_module.addImport("initramfs_archive", b.createModule(.{ .root_source_file = b.path("core/initramfs/archive.zig"), .target = target, .optimize = optimize, .imports = &.{.{ .name = "utils", .module = core_utils }} }));
     const test_ui = executionModules(b, target, optimize, proto, core_utils, core_journal, core_session);
     tests.root_module.addImport("maintenance", test_ui.maintenance);
@@ -549,8 +550,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .imports = &.{ .{ .name = "utils", .module = core_utils }, .{ .name = "ext2fs_c", .module = test_ui.ext.bindings }, .{ .name = "fatfs_c", .module = test_ui.fat.bindings }, .{ .name = "ntfs_c", .module = test_ui.ntfs.bindings }, .{ .name = "btrfs_c", .module = test_ui.btrfs.bindings } },
     });
-    const host_proto = b.createModule(.{ .root_source_file = b.path("protocol/root.zig"), .target = target, .optimize = optimize });
-    const host_imports: []const std.Build.Module.Import = &.{ .{ .name = "proto", .module = host_proto }, .{ .name = "storage", .module = storage_module }, .{ .name = "utils", .module = core_utils } };
+    const host_imports: []const std.Build.Module.Import = &.{ .{ .name = "proto", .module = proto }, .{ .name = "storage", .module = storage_module }, .{ .name = "utils", .module = core_utils } };
     const host_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("core/restart/tests.zig"), .target = target, .optimize = optimize, .link_libc = true, .imports = host_imports }) });
     compile_policy.configure(host_tests);
     b.step("test-session", "Verify offline compilation, recovery anchors and maintenance session safety").dependOn(&b.addRunArtifact(host_tests).step);
@@ -558,7 +558,7 @@ pub fn build(b: *std.Build) void {
     compile_policy.configure(session_image);
     b.step("session-image", "Build the explicit regular-image maintenance session harness").dependOn(&b.addInstallArtifact(session_image, .{}).step);
     const session_fixture_storage = b.createModule(.{ .root_source_file = b.path("core/maint/storage/root.zig"), .target = target, .optimize = optimize, .imports = &.{.{ .name = "utils", .module = core_utils }} });
-    const session_acceptance = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("test/integration/maintenance_session.zig"), .target = target, .optimize = optimize, .imports = &.{ .{ .name = "proto", .module = host_proto }, .{ .name = "storage", .module = session_fixture_storage }, .{ .name = "utils", .module = core_utils } } }) });
+    const session_acceptance = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("test/integration/maintenance_session.zig"), .target = target, .optimize = optimize, .imports = &.{ .{ .name = "proto", .module = proto }, .{ .name = "storage", .module = session_fixture_storage }, .{ .name = "utils", .module = core_utils } } }) });
     const session_binary = b.addOptions();
     session_binary.addOptionPath("path", session_image.getEmittedBin());
     session_acceptance.root_module.addOptions("fixture_binary", session_binary);
@@ -747,11 +747,6 @@ pub fn build(b: *std.Build) void {
     const generate = command(b, tool, &.{"proto"});
     b.step("proto", "Regenerate protocol bindings").dependOn(&generate.step);
 
-    b.step(
-        "check-proto",
-        "Fail if generated contract files drift",
-    ).dependOn(&check.step);
-
     const bundle_step = bundle_steps.add(b, tool, maintenance, application.binary);
     const all = b.step("all", "Build core and the complete bundle");
     all.dependOn(bundle_step);
@@ -824,7 +819,7 @@ fn executionModules(
             .{ .name = "proto", .module = proto },
             .{ .name = "utils", .module = utils },
             .{ .name = "journal", .module = journal },
-            .{ .name = "legacy_handoff", .module = session },
+            .{ .name = "handoff", .module = session },
             .{ .name = "ext2fs_c", .module = ext.bindings },
             .{ .name = "fatfs_c", .module = fat.bindings },
             .{ .name = "ntfs_c", .module = ntfs.bindings },
@@ -924,7 +919,7 @@ fn sessionModule(
     utils: *std.Build.Module,
 ) *std.Build.Module {
     return b.createModule(.{
-        .root_source_file = b.path("core/legacy_handoff.zig"),
+        .root_source_file = b.path("core/handoff.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{ .{ .name = "proto", .module = proto }, .{ .name = "utils", .module = utils } },

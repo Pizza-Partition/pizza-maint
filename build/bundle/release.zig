@@ -31,9 +31,7 @@ pub const Lock = struct {
 };
 
 fn hex(value: []const u8, size: usize) bool {
-    if (value.len != size) return false;
-    for (value) |byte| if (!std.ascii.isDigit(byte) and (byte < 'a' or byte > 'f')) return false;
-    return true;
+    return value.len == size and std.mem.indexOfNone(u8, value, "0123456789abcdef") == null;
 }
 
 pub fn readLock(a: std.mem.Allocator, io: std.Io, path: []const u8) !Lock {
@@ -72,12 +70,8 @@ pub const RuntimePolicy = enum { attested_release, local_candidate };
 pub fn verifySource(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, root: []const u8, lock: Lock, policy: RuntimePolicy) !Base {
     if (policy == .attested_release) return verify(a, io, env, root, lock);
     try lock.validate();
-    try verifyDigest(a, io, try std.fs.path.join(a, &.{ root, lock.asset }), lock.sha256);
-    try verifyDigest(a, io, try std.fs.path.join(a, &.{ root, lock.kernel_asset }), lock.kernel_sha256);
-    try verifyDigest(a, io, try std.fs.path.join(a, &.{ root, lock.metadata_asset }), lock.metadata_sha256);
-    const base = try std.json.parseFromSliceLeaky(Base, a, try std.Io.Dir.cwd().readFileAlloc(io, try std.fs.path.join(a, &.{ root, lock.metadata_asset }), a, .limited(1024 * 1024)), .{ .ignore_unknown_fields = true });
-    try base.validate();
-    return base;
+    try verifyDigests(a, io, root, lock);
+    return readBase(a, io, root, lock);
 }
 
 pub fn verify(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, root: []const u8, lock: Lock) !Base {
@@ -86,9 +80,7 @@ pub fn verify(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, r
 
 pub fn verifyWithTrust(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, root: []const u8, lock: Lock, options: TrustOptions) !Base {
     try lock.validate();
-    try verifyDigest(a, io, try std.fs.path.join(a, &.{ root, lock.asset }), lock.sha256);
-    try verifyDigest(a, io, try std.fs.path.join(a, &.{ root, lock.kernel_asset }), lock.kernel_sha256);
-    try verifyDigest(a, io, try std.fs.path.join(a, &.{ root, lock.metadata_asset }), lock.metadata_sha256);
+    try verifyDigests(a, io, root, lock);
     const now = std.Io.Clock.real.now(io).toSeconds();
     if (now < 0) return error.InvalidClock;
     const trust = try @import("trust.zig").load(a, io, env, options, @intCast(now));
@@ -99,9 +91,7 @@ pub fn verifyWithTrust(a: std.mem.Allocator, io: std.Io, env: *std.process.Envir
         .tag = lock.tag,
         .commit = lock.commit,
     }, &.{ .{ lock.asset, lock.sha256 }, .{ lock.kernel_asset, lock.kernel_sha256 }, .{ lock.metadata_asset, lock.metadata_sha256 } }, @intCast(now));
-    const base = try std.json.parseFromSliceLeaky(Base, a, try std.Io.Dir.cwd().readFileAlloc(io, try std.fs.path.join(a, &.{ root, lock.metadata_asset }), a, .limited(1024 * 1024)), .{ .ignore_unknown_fields = true });
-    try base.validate();
-    return base;
+    return readBase(a, io, root, lock);
 }
 
 pub fn fetch(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, lock_file: []const u8, destination: []const u8) !void {
@@ -122,4 +112,16 @@ pub fn fetch(a: std.mem.Allocator, io: std.Io, env: *std.process.Environ.Map, lo
     }
     _ = try verify(a, io, env, output.temporary, lock);
     try std.Io.Dir.cwd().renamePreserve(output.temporary, .cwd(), output.target, io);
+}
+
+fn verifyDigests(a: std.mem.Allocator, io: std.Io, root: []const u8, lock: Lock) !void {
+    try verifyDigest(a, io, try std.fs.path.join(a, &.{ root, lock.asset }), lock.sha256);
+    try verifyDigest(a, io, try std.fs.path.join(a, &.{ root, lock.kernel_asset }), lock.kernel_sha256);
+    try verifyDigest(a, io, try std.fs.path.join(a, &.{ root, lock.metadata_asset }), lock.metadata_sha256);
+}
+
+fn readBase(a: std.mem.Allocator, io: std.Io, root: []const u8, lock: Lock) !Base {
+    const base = try std.json.parseFromSliceLeaky(Base, a, try std.Io.Dir.cwd().readFileAlloc(io, try std.fs.path.join(a, &.{ root, lock.metadata_asset }), a, .limited(1024 * 1024)), .{ .ignore_unknown_fields = true });
+    try base.validate();
+    return base;
 }

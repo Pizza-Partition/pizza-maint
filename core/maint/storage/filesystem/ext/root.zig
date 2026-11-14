@@ -116,35 +116,17 @@ pub fn allocation(a: std.mem.Allocator, io: std.Io, reader: device.Reader) !Allo
     defer session.close();
     const fs = session.fs;
     const sb = &fs.*.super.*;
-    if (!supported(sb)) return error.ExtUnsupportedFeature;
-    if (!clean(sb)) return error.ExtRecoveryRequired;
+    try loadBitmaps(session);
     const blocks = c_api.ext2fs_blocks_count(fs.*.super);
-    if (blocks > MAX_SCAN_BLOCKS or sb.s_inodes_count > MAX_SCAN_INODES) return error.ExtScanBudgetExceeded;
-    try session.check(c_api.ext2fs_check_desc(fs));
-    for (0..fs.*.group_desc_count) |index| {
-        if (c_api.ext2fs_group_desc_csum_verify(fs, @intCast(index)) == 0) return error.ExtDescriptorChecksum;
-    }
-    // The library verifies bitmap checksums and synthesizes lazy/uninitialized
-    // bitmaps with their reserved metadata, rather than treating them as zeros.
-    try session.check(c_api.ext2fs_read_bitmaps(fs));
-    if (fs.*.flags & (c_api.EXT2_FLAG_BBITMAP_TAIL_PROBLEM | c_api.EXT2_FLAG_IBITMAP_TAIL_PROBLEM) != 0) return error.ExtBitmapPadding;
     const buffer = try a.alloc(u8, fs.*.blocksize);
     defer a.free(buffer);
     var result: Allocation = .{ .groups = fs.*.group_desc_count, .blocks = blocks, .free_blocks = 0, .inodes = sb.s_inodes_count, .free_inodes = 0 };
     for (0..fs.*.group_desc_count) |index| {
         const group: c_api.dgrp_t = @intCast(index);
-        const count = c_api.ext2fs_group_blocks_count(fs, group);
-        if (count <= 0 or count > fs.*.blocksize * 8) return error.ExtInvalidGeometry;
-        try session.check(c_api.ext2fs_get_block_bitmap_range2(fs.*.block_map, c_api.ext2fs_group_first_block2(fs, group), @intCast(count), buffer.ptr));
-        const free_blocks = countFree(buffer, @intCast(count));
-        if (free_blocks != c_api.ext2fs_bg_free_blocks_count(fs, group)) return error.ExtCounterMismatch;
-        const inode_start = @as(u64, group) * sb.s_inodes_per_group;
-        if (inode_start >= sb.s_inodes_count) return error.ExtInvalidGeometry;
-        const inode_count: usize = @intCast(@min(sb.s_inodes_per_group, sb.s_inodes_count - inode_start));
-        if (inode_count > buffer.len * 8) return error.ExtInvalidGeometry;
-        try session.check(c_api.ext2fs_get_inode_bitmap_range2(fs.*.inode_map, inode_start + 1, inode_count, buffer.ptr));
-        const free_inodes = countFree(buffer, inode_count);
-        if (free_inodes != c_api.ext2fs_bg_free_inodes_count(fs, group)) return error.ExtCounterMismatch;
+        const counts = try freeCounts(session, group, buffer);
+        const free_blocks = counts.blocks;
+        const free_inodes = counts.inodes;
+        if (free_blocks != c_api.ext2fs_bg_free_blocks_count(fs, group) or free_inodes != c_api.ext2fs_bg_free_inodes_count(fs, group)) return error.ExtCounterMismatch;
         result.free_blocks += free_blocks;
         result.free_inodes += free_inodes;
         const flags = c_api.ext2fs_bg_flags(fs, group);
@@ -168,4 +150,35 @@ pub fn check(_: *const anyopaque, a: std.mem.Allocator, io: std.Io, reader: devi
         else => return err,
     };
     return .{ .consistent = true, .scope = .allocation_metadata, .detail = try a.print("ext allocation metadata: {d} groups, {d} free blocks, {d} free inodes; inode/directory/journal checks not performed", .{ result.groups, result.free_blocks, result.free_inodes }) };
+}
+
+pub fn loadBitmaps(session: *Session) !void {
+    const fs = session.fs;
+    const sb = &fs.*.super.*;
+    if (!supported(sb)) return error.ExtUnsupportedFeature;
+    if (!clean(sb)) return error.ExtRecoveryRequired;
+    const blocks = c_api.ext2fs_blocks_count(fs.*.super);
+    if (blocks > MAX_SCAN_BLOCKS or sb.s_inodes_count > MAX_SCAN_INODES) return error.ExtScanBudgetExceeded;
+    try session.check(c_api.ext2fs_check_desc(fs));
+    for (0..fs.*.group_desc_count) |index| {
+        if (c_api.ext2fs_group_desc_csum_verify(fs, @intCast(index)) == 0) return error.ExtDescriptorChecksum;
+    }
+    // The library verifies bitmap checksums and synthesizes lazy/uninitialized
+    // bitmaps with their reserved metadata, rather than treating them as zeros.
+    try session.check(c_api.ext2fs_read_bitmaps(fs));
+    if (fs.*.flags & (c_api.EXT2_FLAG_BBITMAP_TAIL_PROBLEM | c_api.EXT2_FLAG_IBITMAP_TAIL_PROBLEM) != 0) return error.ExtBitmapPadding;
+}
+pub fn freeCounts(session: *Session, group: c_api.dgrp_t, buffer: []u8) !struct { blocks: u32, inodes: u32 } {
+    const fs = session.fs;
+    const sb = &fs.*.super.*;
+    const count = c_api.ext2fs_group_blocks_count(fs, group);
+    if (count <= 0 or count > buffer.len * 8) return error.ExtInvalidGeometry;
+    try session.check(c_api.ext2fs_get_block_bitmap_range2(fs.*.block_map, c_api.ext2fs_group_first_block2(fs, group), @intCast(count), buffer.ptr));
+    const blocks: u32 = @intCast(countFree(buffer, @intCast(count)));
+    const start = @as(u64, group) * sb.s_inodes_per_group;
+    if (start >= sb.s_inodes_count) return error.ExtInvalidGeometry;
+    const inodes: usize = @intCast(@min(sb.s_inodes_per_group, sb.s_inodes_count - start));
+    if (inodes > buffer.len * 8) return error.ExtInvalidGeometry;
+    try session.check(c_api.ext2fs_get_inode_bitmap_range2(fs.*.inode_map, start + 1, inodes, buffer.ptr));
+    return .{ .blocks = blocks, .inodes = @intCast(countFree(buffer, inodes)) };
 }

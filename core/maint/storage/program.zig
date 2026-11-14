@@ -249,16 +249,11 @@ pub const PhysicalProgramBuilder = struct {
         }
     }
     pub fn hashVersion(self: *const PhysicalProgramBuilder, io: std.Io, v: u32, range: model.Range) !model.Digest {
-        var buffer: [65536]u8 = undefined;
-        var hash = std.crypto.hash.sha2.Sha256.init(.{});
-        var offset: u64 = 0;
-        while (offset < range.length) {
-            const part = buffer[0..@intCast(@min(buffer.len, range.length - offset))];
-            try self.readVersion(io, v, .{ .offset = range.offset + offset, .length = part.len }, part);
-            hash.update(part);
-            offset += part.len;
-        }
-        return hash.finalResult();
+        const view: View = .{ .builder = self, .version = v, .range = .{ .offset = 0, .length = self.reader.target.capacity } };
+        var reader = view.reader();
+        // readVersion accounts for activity in its underlying source reads.
+        reader.memory = null;
+        return reader.digest(io, range);
     }
     pub fn finish(self: *PhysicalProgramBuilder) !Program {
         var result: Program = .{ .evidence = try self.evidence.toOwnedSlice(self.allocator), .target = self.reader.target, .steps = try self.steps.toOwnedSlice(self.allocator), .guards = try self.guards.toOwnedSlice(self.allocator), .encoded = &.{}, .digest = undefined };

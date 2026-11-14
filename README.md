@@ -4,7 +4,7 @@ Pizza 的 Linux 维护系统：PID1、维护界面、storage、物理程序编�
 基础镜像、内核和模块来自独立 pizza-bundle 的固定发布；桌面用户界面属于 pizza。
 本仓库不构建桌面程序或单独的特权 helper。
 
-使用 Zig 0.17.0。`config/bundle/release.json` 固定基础发布来源和摘要。
+使用 Zig 0.17.1。`config/bundle/release.json` 固定基础发布来源和摘要。
 
 Zig 编译步骤（含测试、生成工具和协议导出工具）默认启用 incremental。
 `build/compile.zig` 统一链接器配置：Windows 使用 Zig 的 `Coff.zig`，Linux 使用
@@ -26,7 +26,7 @@ zig build -fincremental --watch test
 CI 和发布继续使用下方的单次构建命令。
 
 ```sh
-zig build check check-proto
+zig build check
 zig build test-session test-maint-session-image
 zig build test-storage-unit test-filesystems test-storage-crash
 zig build protocol-package
@@ -38,8 +38,8 @@ Python。维护会话验收生成临时普通镜像，再在独立进程中调�
 覆盖 bootstrap、apply、recover、undo、accept 和 cleanup；测试不会访问真实磁盘。
 
 `protocol/contract.json` 是唯一 wire 协议来源，当前版本 v4。
-`zig build proto` 更新 Zig、JavaScript 和 TypeScript 绑定，`check-proto` 检查漂移。
-`protocol-package` 输出 `zig-out/share/pizza/protocol` 和可供 `zig fetch --save=pizza_protocol` 消费的 `zig-out/share/pizza/pizza-protocol-4.0.1.tar.gz`。归档包含 README、绑定与内容哈希清单；文件顺序、权限和时间戳固定。
+`zig build proto` 更新 Zig、JavaScript 和 TypeScript 绑定，`check` 检查漂移。
+`protocol-package` 输出 `zig-out/share/pizza/protocol` 和可供 `zig fetch --save=pizza_protocol` 消费的 `zig-out/share/pizza/pizza-protocol-4.0.2.tar.gz`。归档包含 README、绑定与内容哈希清单；文件顺序、权限和时间戳固定。
 协议源码由本仓库的 `protocol/` 统一维护，随维护包一起导出。桌面仓库通过 `zig fetch` 固定维护包的发布 URL 和包哈希，并直接使用包内的同版协议源码。
 桌面仓库只消费该包和维护发布产物，不链接本仓库的 storage。
 协议版本不兼容直接拒绝；恢复日志格式版本独立管理。

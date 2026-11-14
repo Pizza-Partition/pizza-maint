@@ -51,7 +51,8 @@ pub fn tailRange(usable: storage.model.Range, bytes: u64, block: u32) !storage.m
     return .{ .offset = end - length, .length = length };
 }
 pub fn compile(a: std.mem.Allocator, io: std.Io, reader: storage.device.Reader, inventory: wire.InventorySnapshot, draft: wire.PlanDraft, resources: Resources) !Compiled {
-    const final = try @import("compiler.zig").compileOffline(a, io, reader, inventory, draft);
+    const compiled = try @import("compiler.zig").compileOffline(a, io, reader, inventory, draft);
+    const final = compiled.plan;
     const target = reader.target;
     const original = try storage.partition_table.BUILTIN.readLayout(a, io, reader);
     const block = resources.bootstrap_store.block_size;
@@ -110,8 +111,7 @@ pub fn compile(a: std.mem.Allocator, io: std.Io, reader: storage.device.Reader, 
     var apply = try storage.service.layoutWithFormats(a, io, boot_preview.reader(), apply_layout, formats.items);
     var apply_preview = try storage.program.Preview.init(boot_preview.reader(), apply.program);
     var cleanup = try storage.service.layout(a, io, apply_preview.reader(), final.layout.?);
-    const approved = try @import("planner.zig").validate(a, inventory, draft);
-    const request_digest = try proto.hexDigest(approved.digest);
+    const request_digest = compiled.digest;
     bootstrap.program = try storage.program.bindRequest(a, bootstrap.program, request_digest);
     apply.program = try storage.program.bindRequest(a, apply.program, request_digest);
     cleanup.program = try storage.program.bindRequest(a, cleanup.program, request_digest);

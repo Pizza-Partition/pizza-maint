@@ -9,8 +9,8 @@ test "all subsystem boundaries compile" {
     std.testing.refAllDecls(@import("init/supervisor.zig"));
     std.testing.refAllDecls(@import("init/recovery.zig"));
     std.testing.refAllDecls(@import("journal"));
-    std.testing.refAllDecls(@import("maintenance").legacy_backend);
-    std.testing.refAllDecls(@import("maintenance").legacy_executor);
+    std.testing.refAllDecls(@import("maintenance").backend);
+    std.testing.refAllDecls(@import("maintenance").executor);
     std.testing.refAllDecls(@import("maintenance").storage);
     std.testing.refAllDecls(@import("execution_tui"));
     std.testing.refAllDecls(proto);
