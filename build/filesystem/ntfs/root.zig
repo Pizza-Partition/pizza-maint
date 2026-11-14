@@ -5,10 +5,14 @@ pub const Result = struct { bindings: *std.Build.Module, archive: std.Build.Lazy
 pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) Result {
     if (target.result.os.tag != .linux or target.result.cpu.arch != .x86_64) @panic("NTFS configuration requires x86_64 Linux");
     const source = b.dependency("ntfs3g", .{});
-    const generator = b.addExecutable(.{ .name = "ntfs-sources", .root_module = b.createModule(.{ .root_source_file = b.path("build/filesystem/ntfs/generate.zig"), .target = b.graph.host, .optimize = .safe }) });
-    compile_policy.configure(generator);
-    const run = b.addRunArtifact(generator);
-    const generated = run.addOutputDirectoryArg("ntfs");
+    const generated = b.named_lazy_paths.get("pizza-ntfs-sources") orelse generated: {
+        const generator = b.addExecutable(.{ .name = "ntfs-sources", .root_module = b.createModule(.{ .root_source_file = b.path("build/filesystem/ntfs/generate.zig"), .target = b.graph.host, .optimize = .safe }) });
+        compile_policy.configure(generator);
+        const run = b.addRunArtifact(generator);
+        const generated = run.addOutputDirectoryArg("ntfs");
+        b.addNamedLazyPath("pizza-ntfs-sources", generated);
+        break :generated generated;
+    };
     const config = b.addConfigHeader(.{ .include_path = "config.h" }, .{ .VERSION = "2026.9.28", .PACKAGE = "ntfs-3g", .PACKAGE_VERSION = "2026.9.28", .STDC_HEADERS = 1, .WORDS_LITTLEENDIAN = 1, ._FILE_OFFSET_BITS = 64, .DISABLE_PLUGINS = 1 });
     for (FEATURES) |feature| config.addValue(feature, u8, 1);
     const module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true, .pic = true });

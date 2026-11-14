@@ -13,13 +13,17 @@ pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     if (target.result.os.tag != .linux or target.result.cpu.arch != .x86_64)
         @panic("e2fsprogs configuration currently supports x86_64 Linux");
     const source = b.dependency("e2fsprogs", .{});
-    const generator = b.addExecutable(.{ .name = "ext-headers", .root_module = b.createModule(.{ .root_source_file = b.path("build/filesystem/ext/generate.zig"), .target = b.graph.host, .optimize = .safe }) });
-    compile_policy.configure(generator);
-    const run = b.addRunArtifact(generator);
-    const headers = run.addOutputDirectoryArg("ext-headers");
-    run.addFileArg(source.path("lib/ext2fs/ext2_types.h.in"));
-    run.addFileArg(source.path("lib/ext2fs/ext2_err.et.in"));
-    run.addFileArg(source.path("lib/ext2fs/ext2fs.h"));
+    const headers = b.named_lazy_paths.get("pizza-ext-headers") orelse headers: {
+        const generator = b.addExecutable(.{ .name = "ext-headers", .root_module = b.createModule(.{ .root_source_file = b.path("build/filesystem/ext/generate.zig"), .target = b.graph.host, .optimize = .safe }) });
+        compile_policy.configure(generator);
+        const run = b.addRunArtifact(generator);
+        const headers = run.addOutputDirectoryArg("ext-headers");
+        run.addFileArg(source.path("lib/ext2fs/ext2_types.h.in"));
+        run.addFileArg(source.path("lib/ext2fs/ext2_err.et.in"));
+        run.addFileArg(source.path("lib/ext2fs/ext2fs.h"));
+        b.addNamedLazyPath("pizza-ext-headers", headers);
+        break :headers headers;
+    };
     const config = b.addConfigHeader(.{ .include_path = "config.h" }, .{
         .CONFIG_DISABLE_LIBARCHIVE = 1,
         .CONFIG_MMP = 1,
@@ -37,17 +41,22 @@ pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     });
     config.addIdent("TLS", "_Thread_local");
     for (LINUX_FEATURES) |feature| config.addValue(feature, u8, 1);
-    const crc_generator = b.addExecutable(.{ .name = "ext-crc-table", .root_module = b.createModule(.{ .target = b.graph.host, .optimize = .safe, .link_libc = true }) });
-    compile_policy.configure(crc_generator);
-    crc_generator.root_module.addCSourceFile(.{ .file = source.path("lib/ext2fs/gen_crc32ctable.c"), .flags = &.{"-std=gnu11"} });
-    const table = b.addRunArtifact(crc_generator).captureStdOut(.{});
-    const tables = b.addWriteFiles();
-    _ = tables.addCopyFile(table, "crc32c_table.h");
+    const table_headers = b.named_lazy_paths.get("pizza-ext-crc-table") orelse generated: {
+        const crc_generator = b.addExecutable(.{ .name = "ext-crc-table", .root_module = b.createModule(.{ .target = b.graph.host, .optimize = .safe, .link_libc = true }) });
+        compile_policy.configure(crc_generator);
+        crc_generator.root_module.addCSourceFile(.{ .file = source.path("lib/ext2fs/gen_crc32ctable.c"), .flags = &.{"-std=gnu11"} });
+        const table = b.addRunArtifact(crc_generator).captureStdOut(.{});
+        const tables = b.addWriteFiles();
+        _ = tables.addCopyFile(table, "crc32c_table.h");
+        const directory = tables.getDirectory();
+        b.addNamedLazyPath("pizza-ext-crc-table", directory);
+        break :generated directory;
+    };
     const module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true, .pic = true });
     module.addConfigHeader(config);
     module.addIncludePath(headers);
     module.addIncludePath(headers.path(b, "ext2fs"));
-    module.addIncludePath(tables.getDirectory());
+    module.addIncludePath(table_headers);
     module.addIncludePath(source.path("lib"));
     module.addIncludePath(source.path("lib/ext2fs"));
     module.addIncludePath(source.path("lib/et"));
